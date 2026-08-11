@@ -3,10 +3,15 @@ import { assert, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 
 import {
+  PROVIDER_RUNTIME_EVENT_MAX_BYTES,
   PROVIDER_RUNTIME_INGESTION_CONSUMER,
   ProviderRuntimeEventRepository,
 } from "../Services/ProviderRuntimeEvents.ts";
-import { ProviderRuntimeEventRepositoryLive } from "./ProviderRuntimeEvents.ts";
+import {
+  ProviderRuntimeEventRepositoryLive,
+  truncateOversizeProviderRuntimeEvent,
+  PROVIDER_RUNTIME_EVENT_TRUNCATED_KEY,
+} from "./ProviderRuntimeEvents.ts";
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
 
 const layer = it.layer(
@@ -114,4 +119,107 @@ layer("ProviderRuntimeEventRepository", (it) => {
       assert.strictEqual(conflict._tag, "PersistenceDecodeError");
     }),
   );
+
+  it.effect(
+    "journals an oversized item.completed by truncating its payload instead of failing",
+    () =>
+      Effect.gen(function* () {
+        const repository = yield* ProviderRuntimeEventRepository;
+        // Mirrors Pi tool_execution_end: the full tool result is copied into
+        // payload.data, so a multi-MB stdout must not strand the item.
+        const oversizedResult = "x".repeat(PROVIDER_RUNTIME_EVENT_MAX_BYTES * 2);
+        const oversizedEvent: ProviderRuntimeEvent = {
+          type: "item.completed",
+          eventId: EventId.makeUnsafe("runtime-event-oversized"),
+          provider: "pi",
+          createdAt: "2026-07-14T00:00:00.000Z",
+          threadId: ThreadId.makeUnsafe("thread-runtime-journal"),
+          turnId: TurnId.makeUnsafe("turn-runtime-journal"),
+          payload: {
+            itemType: "command_execution",
+            status: "completed",
+            title: "bash long-output",
+            data: { toolCallId: "call-1", toolName: "bash", result: oversizedResult },
+          },
+        };
+
+        const persisted = yield* repository.append(oversizedEvent);
+        const replayed = yield* repository.readAfter({
+          sequenceExclusive: persisted.sequence - 1,
+          throughSequenceInclusive: persisted.sequence,
+          limit: 10,
+        });
+        const row = replayed[0];
+        assert.ok(row);
+        assert.strictEqual(row.event.type, "item.completed");
+        if (row.event.type === "item.completed") {
+          const rawPayload = (row.event.raw?.payload ?? {}) as Record<string, unknown>;
+          const forensics = rawPayload[PROVIDER_RUNTIME_EVENT_TRUNCATED_KEY] as
+            | { truncated?: boolean; originalBytes?: number }
+            | undefined;
+          assert.strictEqual(forensics?.truncated, true);
+          assert.isAbove(forensics?.originalBytes ?? 0, PROVIDER_RUNTIME_EVENT_MAX_BYTES);
+          const data = row.event.payload.data as { result?: string };
+          assert.isBelow((data.result ?? "").length, oversizedResult.length);
+        }
+
+        const duplicate = yield* repository.append(oversizedEvent);
+        assert.strictEqual(duplicate.sequence, persisted.sequence);
+      }),
+  );
+
+  it.effect("still rejects an event whose payload is not a record and stays oversized", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProviderRuntimeEventRepository;
+      const nonRecordPayload = "y".repeat(PROVIDER_RUNTIME_EVENT_MAX_BYTES * 3);
+      const oversizedEvent = {
+        type: "content.delta",
+        eventId: EventId.makeUnsafe("runtime-event-non-record"),
+        provider: "pi",
+        createdAt: "2026-07-14T00:00:00.000Z",
+        threadId: ThreadId.makeUnsafe("thread-runtime-journal"),
+        turnId: TurnId.makeUnsafe("turn-runtime-journal"),
+        payload: {
+          streamKind: "assistant_text",
+          delta: nonRecordPayload,
+        },
+      } satisfies ProviderRuntimeEvent;
+
+      // A record payload shrinks; this only fails if truncation itself leaves
+      // the row above budget, which the leaf budget must prevent.
+      const persisted = yield* repository.append(oversizedEvent);
+      const replayed = yield* repository.readAfter({
+        sequenceExclusive: persisted.sequence - 1,
+        throughSequenceInclusive: persisted.sequence,
+        limit: 10,
+      });
+      assert.strictEqual(replayed[0]?.event.eventId, "runtime-event-non-record");
+    }),
+  );
+
+  it("truncateOversizeProviderRuntimeEvent keeps unicode code points intact", () => {
+    const emojiPayload = "🙂".repeat(PROVIDER_RUNTIME_EVENT_MAX_BYTES * 2);
+    const event: ProviderRuntimeEvent = {
+      type: "content.delta",
+      eventId: EventId.makeUnsafe("runtime-event-unicode"),
+      provider: "pi",
+      createdAt: "2026-07-14T00:00:00.000Z",
+      threadId: ThreadId.makeUnsafe("thread-runtime-journal"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: emojiPayload,
+      },
+    };
+    const compacted = truncateOversizeProviderRuntimeEvent(
+      event,
+      PROVIDER_RUNTIME_EVENT_MAX_BYTES * 8,
+    );
+    const payload = compacted.payload as { delta: string };
+    assert.isBelow(
+      Buffer.byteLength(payload.delta, "utf8"),
+      Buffer.byteLength(emojiPayload, "utf8"),
+    );
+    // No replacement characters from a split surrogate pair.
+    assert.notInclude(payload.delta, "\uFFFD");
+  });
 });

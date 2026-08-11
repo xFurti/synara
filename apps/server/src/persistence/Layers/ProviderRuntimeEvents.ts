@@ -25,27 +25,130 @@ const StoredRowSchema = Schema.Struct({
 });
 const decodeStoredRow = Schema.decodeUnknownEffect(StoredRowSchema);
 
+/**
+ * Longest-prefix string truncation that never splits a UTF-8 code point.
+ * Returns the whole string when it already fits.
+ */
+const truncateUtf8ToBytes = (value: string, maxBytes: number): string => {
+  const encoded = Buffer.from(value, "utf8");
+  if (encoded.byteLength <= maxBytes) return value;
+  let prefixEnd = maxBytes;
+  while (prefixEnd > 0 && ((encoded[prefixEnd] ?? 0) & 0xc0) === 0x80) {
+    prefixEnd -= 1;
+  }
+  return encoded.subarray(0, prefixEnd).toString("utf8");
+};
+
+/** Marker embedded in event.raw so replay keeps the truncation forensics. */
+export const PROVIDER_RUNTIME_EVENT_TRUNCATED_KEY = "synaraJournalTruncated" as const;
+
+/**
+ * Shrink an oversized runtime event until it fits the durable journal budget.
+ *
+ * The journal keeps a hard 2MB row budget; an oversized item (typically a Pi
+ * tool result copied verbatim into payload.data) must still be journaled —
+ * quarantining it strands the live item and surfaces a permanent-failure
+ * warning even though the underlying stream is healthy. Structural string
+ * leaves inside the payload are truncated first (largest wins); the event then
+ * records the truncation inside event.raw, whose payload is Schema.Unknown and
+ * therefore survives the journal round-trip untouched.
+ */
+export function truncateOversizeProviderRuntimeEvent(
+  event: ProviderRuntimeEvent,
+  originalBytes: number,
+): ProviderRuntimeEvent {
+  const forensics = {
+    [PROVIDER_RUNTIME_EVENT_TRUNCATED_KEY]: {
+      truncated: true,
+      reason: "provider runtime event exceeded the durable journal size limit",
+      originalBytes,
+    },
+  };
+
+  const payload =
+    event.payload !== null && typeof event.payload === "object"
+      ? shrinkRecordStrings(event.payload as Record<string, unknown>)
+      : event.payload;
+
+  if (event.raw === undefined) {
+    return {
+      ...event,
+      payload,
+      raw: { source: inferRawSource(event.provider), payload: forensics },
+    } as ProviderRuntimeEvent;
+  }
+
+  const rawPayload = event.raw.payload;
+  const mergedRawPayload =
+    rawPayload !== null && typeof rawPayload === "object"
+      ? { ...(rawPayload as Record<string, unknown>), ...forensics }
+      : { value: rawPayload, ...forensics };
+
+  return {
+    ...event,
+    payload,
+    raw: { ...event.raw, payload: mergedRawPayload },
+  } as ProviderRuntimeEvent;
+}
+
+const inferRawSource = (provider: ProviderRuntimeEvent["provider"]) => {
+  switch (provider) {
+    case "claudeAgent":
+      return "claude.sdk.message" as const;
+    case "antigravity":
+      return "antigravity.cli.event" as const;
+    case "cursor":
+      return "acp.cursor.extension" as const;
+    case "kilo":
+      return "kilo.sdk.event" as const;
+    case "opencode":
+      return "opencode.sdk.event" as const;
+    default:
+      return "codex.app-server.notification" as const;
+  }
+};
+
+/** Budget assigned to every string leaf so the total stays well under 2MB. */
+const JOURNAL_STRING_LEAF_BUDGET_BYTES = 64 * 1024;
+
+const shrinkRecordStrings = (record: Record<string, unknown>): Record<string, unknown> => {
+  const shrunk: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (typeof value === "string") {
+      shrunk[key] = truncateUtf8ToBytes(value, JOURNAL_STRING_LEAF_BUDGET_BYTES);
+    } else if (Array.isArray(value)) {
+      shrunk[key] = value.map((item) =>
+        typeof item === "string"
+          ? truncateUtf8ToBytes(item, JOURNAL_STRING_LEAF_BUDGET_BYTES)
+          : item !== null && typeof item === "object" && !Array.isArray(item)
+            ? shrinkRecordStrings(item as Record<string, unknown>)
+            : item,
+      );
+    } else if (value !== null && typeof value === "object") {
+      shrunk[key] = shrinkRecordStrings(value as Record<string, unknown>);
+    } else {
+      shrunk[key] = value;
+    }
+  }
+  return shrunk;
+};
+
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  const append: ProviderRuntimeEventRepositoryShape["append"] = (event) =>
+  const insertPersistedEvent = (
+    originalEvent: ProviderRuntimeEvent,
+    persistedEvent: ProviderRuntimeEvent,
+    persistedEventJson: string,
+  ) =>
     Effect.gen(function* () {
-      const eventJson = yield* encodeEvent(event).pipe(
-        Effect.mapError(toPersistenceDecodeError("ProviderRuntimeEvent.append.encode")),
-      );
-      if (Buffer.byteLength(eventJson, "utf8") > PROVIDER_RUNTIME_EVENT_MAX_BYTES) {
-        return yield* new PersistenceDecodeError({
-          operation: "ProviderRuntimeEvent.append",
-          issue: `Provider runtime event exceeds ${PROVIDER_RUNTIME_EVENT_MAX_BYTES} bytes.`,
-        });
-      }
       const rows = yield* sql
         .withTransaction(
           Effect.gen(function* () {
             const existing = yield* sql<Record<string, unknown>>`
             SELECT sequence, event_json AS "eventJson"
             FROM provider_runtime_events
-            WHERE event_id = ${event.eventId}
+            WHERE event_id = ${originalEvent.eventId}
           `;
             if (existing.length > 0) return existing;
             return yield* sql<Record<string, unknown>>`
@@ -53,9 +156,9 @@ const make = Effect.gen(function* () {
               event_id, thread_id, turn_id, lifecycle_generation, event_type,
               event_json, persisted_at
             ) VALUES (
-              ${event.eventId}, ${event.threadId}, ${event.turnId ?? null},
-              ${event.lifecycleGeneration ?? null},
-              ${event.type}, ${eventJson}, ${new Date().toISOString()}
+              ${originalEvent.eventId}, ${originalEvent.threadId}, ${originalEvent.turnId ?? null},
+              ${originalEvent.lifecycleGeneration ?? null},
+              ${originalEvent.type}, ${persistedEventJson}, ${new Date().toISOString()}
             )
             RETURNING sequence, event_json AS "eventJson"
           `;
@@ -65,13 +168,38 @@ const make = Effect.gen(function* () {
       const row = yield* decodeStoredRow(rows[0]).pipe(
         Effect.mapError(toPersistenceDecodeError("ProviderRuntimeEvent.append.row")),
       );
-      if (row.eventJson !== eventJson) {
+      if (row.eventJson !== persistedEventJson) {
         return yield* new PersistenceDecodeError({
           operation: "ProviderRuntimeEvent.append",
-          issue: `Provider event '${event.eventId}' was reused with different content.`,
+          issue: `Provider event '${originalEvent.eventId}' was reused with different content.`,
         });
       }
-      return { sequence: row.sequence, event } satisfies PersistedProviderRuntimeEvent;
+      return {
+        sequence: row.sequence,
+        event: persistedEvent,
+      } satisfies PersistedProviderRuntimeEvent;
+    });
+
+  const append: ProviderRuntimeEventRepositoryShape["append"] = (event) =>
+    Effect.gen(function* () {
+      const eventJson = yield* encodeEvent(event).pipe(
+        Effect.mapError(toPersistenceDecodeError("ProviderRuntimeEvent.append.encode")),
+      );
+      const originalBytes = Buffer.byteLength(eventJson, "utf8");
+      if (originalBytes > PROVIDER_RUNTIME_EVENT_MAX_BYTES) {
+        const compacted = truncateOversizeProviderRuntimeEvent(event, originalBytes);
+        const compactedJson = yield* encodeEvent(compacted).pipe(
+          Effect.mapError(toPersistenceDecodeError("ProviderRuntimeEvent.append.compact")),
+        );
+        if (Buffer.byteLength(compactedJson, "utf8") > PROVIDER_RUNTIME_EVENT_MAX_BYTES) {
+          return yield* new PersistenceDecodeError({
+            operation: "ProviderRuntimeEvent.append",
+            issue: `Provider runtime event exceeds ${PROVIDER_RUNTIME_EVENT_MAX_BYTES} bytes after payload truncation.`,
+          });
+        }
+        return yield* insertPersistedEvent(event, compacted, compactedJson);
+      }
+      return yield* insertPersistedEvent(event, event, eventJson);
     });
 
   const getHighWaterSequence = sql<{ readonly highWaterSequence: number }>`
