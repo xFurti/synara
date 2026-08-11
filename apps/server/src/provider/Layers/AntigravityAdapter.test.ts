@@ -17,6 +17,7 @@ import {
 } from "../../agentGateway/Services/AgentGatewayCredentials";
 import { AntigravityAdapter } from "../Services/AntigravityAdapter";
 import {
+  antigravityPlannerEmissions,
   antigravityPromptCommandLineIssue,
   type AntigravityAdapterDependencies,
   buildAntigravityCaptureCommand,
@@ -170,6 +171,61 @@ claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)
       model: "Claude Sonnet 4.6",
       effort: "thinking",
     });
+  });
+
+  it("projects Gemini planner thinking separately from assistant content", () => {
+    expect(
+      antigravityPlannerEmissions({
+        thinking: "Inspecting the JSON response before choosing a tool.\n",
+        tool_calls: [{ name: "view_file" }],
+      }),
+    ).toEqual([
+      {
+        itemType: "reasoning",
+        streamKind: "reasoning_text",
+        content: "Inspecting the JSON response before choosing a tool.",
+      },
+    ]);
+
+    expect(
+      antigravityPlannerEmissions({
+        thinking: "Decide how to summarize the findings.",
+        content: "Here is the final answer for the user.",
+      }),
+    ).toEqual([
+      {
+        itemType: "reasoning",
+        streamKind: "reasoning_text",
+        content: "Decide how to summarize the findings.",
+      },
+      {
+        itemType: "assistant_message",
+        streamKind: "assistant_text",
+        content: "Here is the final answer for the user.",
+      },
+    ]);
+
+    // Legacy: tool-bound content without a thinking field stays reasoning.
+    expect(
+      antigravityPlannerEmissions({
+        content: "I will inspect the working directory next.",
+        tool_calls: [{ name: "run_command" }],
+      }),
+    ).toEqual([
+      {
+        itemType: "reasoning",
+        streamKind: "reasoning_text",
+        content: "I will inspect the working directory next.",
+      },
+    ]);
+
+    expect(antigravityPlannerEmissions({ content: "Done." })).toEqual([
+      {
+        itemType: "assistant_message",
+        streamKind: "assistant_text",
+        content: "Done.",
+      },
+    ]);
   });
 
   it("discovers future CLI models without requiring a static catalog update", () => {

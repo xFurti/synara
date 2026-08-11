@@ -78,12 +78,56 @@ type TranscriptStep = {
   readonly type?: string;
   readonly status?: string;
   readonly content?: string;
+  /** Gemini (and some other models) put chain-of-thought here, separate from `content`. */
+  readonly thinking?: string;
   readonly tool_calls?: ReadonlyArray<{
     readonly name?: string;
     readonly args?: Record<string, unknown>;
   }> | null;
   readonly [key: string]: unknown;
 };
+
+export type AntigravityPlannerEmission = {
+  readonly itemType: "assistant_message" | "reasoning";
+  readonly streamKind: "assistant_text" | "reasoning_text";
+  readonly content: string;
+};
+
+/**
+ * Map one Antigravity `PLANNER_RESPONSE` transcript step into Synara runtime items.
+ *
+ * Gemini often writes CoT into `thinking` while leaving `content` empty on
+ * tool-calling steps. Older rows (and Claude-like narration) may only have
+ * `content`; when that content rides with `tool_calls` and no `thinking`, keep
+ * the legacy "content is planner narration → reasoning" behavior.
+ */
+export function antigravityPlannerEmissions(
+  step: Pick<TranscriptStep, "content" | "thinking" | "tool_calls">,
+): ReadonlyArray<AntigravityPlannerEmission> {
+  const thinking = trim(typeof step.thinking === "string" ? step.thinking : undefined);
+  const content = trim(typeof step.content === "string" ? step.content : undefined);
+  const calls = Array.isArray(step.tool_calls) ? step.tool_calls : [];
+  const emissions: AntigravityPlannerEmission[] = [];
+
+  if (thinking) {
+    emissions.push({
+      itemType: "reasoning",
+      streamKind: "reasoning_text",
+      content: thinking,
+    });
+  }
+
+  if (content) {
+    const asReasoning = !thinking && calls.length > 0;
+    emissions.push({
+      itemType: asReasoning ? "reasoning" : "assistant_message",
+      streamKind: asReasoning ? "reasoning_text" : "assistant_text",
+      content,
+    });
+  }
+
+  return emissions;
+}
 
 type PendingTool = {
   readonly stepIndex: number;
@@ -788,11 +832,13 @@ const makeAntigravityAdapter = (dependencies: AntigravityAdapterDependencies = {
       currentTurn(context)?.items.push(step);
 
       if (step.type === "PLANNER_RESPONSE") {
-        const calls = Array.isArray(step.tool_calls) ? step.tool_calls : [];
-        if (calls.length > 0) {
-          emitTextItem(context, step, "reasoning", "reasoning_text");
-        } else {
-          emitTextItem(context, step, "assistant_message", "assistant_text");
+        for (const emission of antigravityPlannerEmissions(step)) {
+          emitTextItem(
+            context,
+            { ...step, content: emission.content },
+            emission.itemType,
+            emission.streamKind,
+          );
         }
         return;
       }
