@@ -1,0 +1,1 @@
+Branch B test file - created by opencode worktree session.

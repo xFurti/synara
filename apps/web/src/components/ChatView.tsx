@@ -28,6 +28,7 @@ import {
   type ServerProviderStatus,
   ThreadId,
   ThreadMarkerId,
+  type ThreadGoalAchievement,
   type ThreadMarker,
   type ThreadMarkerColor,
   type ThreadMarkerStyle,
@@ -98,11 +99,13 @@ import {
 } from "~/lib/providerDiscoveryReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import {
+  hasReconciledServerProviderStatuses,
   serverConfigQueryOptions,
   serverQueryKeys,
   serverSettingsQueryOptions,
 } from "~/lib/serverReactQuery";
 import { useRefreshProviderStatusesNow } from "~/hooks/useProviderStatusRefresh";
+import { useProviderStatusesForLocalConfig } from "~/hooks/useProviderStatusesForLocalConfig";
 import { SINGLE_CHAT_PANE_SCOPE_ID } from "~/lib/chatPaneScope";
 import {
   composerMentionPathNeedsQuoting,
@@ -119,6 +122,7 @@ import {
   normalizeCustomBinaryPath,
   normalizeProviderStatusForLocalConfig,
   resolveProviderSendAvailabilityWithRefresh,
+  resolveAvailableProviderPreference,
 } from "~/lib/providerAvailability";
 import {
   loadConfirmedCustomBinaryPaths,
@@ -320,6 +324,7 @@ import {
 } from "~/lib/icons";
 import { ComposerQueuedHeader } from "./chat/ComposerQueuedHeader";
 import { ComposerLiveChangesHeader } from "./chat/ComposerLiveChangesHeader";
+import { ComposerGoalHeader } from "./chat/ComposerGoalHeader";
 import { ComposerPickerMenuPopup } from "./chat/ComposerPickerMenuPopup";
 import { Button } from "./ui/button";
 import { Skeleton } from "./ui/skeleton";
@@ -465,10 +470,8 @@ import {
   formatCadence,
   automationsForThread,
   isFormSubmittable,
-  providerOptionsForAutomationEdit,
   projectModelSelection as automationProjectModelSelection,
   type AutomationFormState,
-  updateInputFromForm,
 } from "../routes/-automations.shared";
 import { ChatTranscriptPane } from "./chat/ChatTranscriptPane";
 import { ThreadDetailHydrationState } from "./chat/ThreadDetailHydrationState";
@@ -620,6 +623,7 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_MESSAGES: ChatMessage[] = [];
 const EMPTY_PINNED_MESSAGES: readonly PinnedMessage[] = [];
 const EMPTY_THREAD_MARKERS: readonly ThreadMarker[] = [];
+const EMPTY_GOAL_ACHIEVEMENTS: readonly ThreadGoalAchievement[] = [];
 const EMPTY_PINNED_TEXT: ReadonlyMap<MessageId, string> = new Map();
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
@@ -1959,7 +1963,7 @@ export default function ChatView({
             return;
           }
         }
-        await handleNewChat({ fresh: true });
+        await handleNewChat();
       };
 
       try {
@@ -2225,15 +2229,35 @@ export default function ChatView({
   const lockedProvider: ProviderKind | null = hasThreadStarted
     ? (sessionProvider ?? threadProvider ?? selectedProviderByThreadId ?? null)
     : null;
-  const selectedProvider: ProviderKind =
-    lockedProvider ?? selectedProviderByThreadId ?? threadProvider ?? settings.defaultProvider;
+  const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const localProviderStatuses = useProviderStatusesForLocalConfig();
+  const preferredDraftProvider =
+    selectedProviderByThreadId ?? threadProvider ?? settings.defaultProvider;
+  const providerStatusesReconciled = hasReconciledServerProviderStatuses(queryClient);
+  const selectedProvider = useMemo<ProviderKind>(
+    () =>
+      lockedProvider ??
+      resolveAvailableProviderPreference({
+        preferredProvider: preferredDraftProvider,
+        statuses: providerStatusesReconciled ? localProviderStatuses : EMPTY_PROVIDER_STATUSES,
+        providerOrder: settings.providerOrder,
+        hiddenProviders: settings.hiddenProviders,
+      }),
+    [
+      localProviderStatuses,
+      lockedProvider,
+      preferredDraftProvider,
+      providerStatusesReconciled,
+      settings.hiddenProviders,
+      settings.providerOrder,
+    ],
+  );
   const previousSelectedProviderRef = useRef<{
     threadId: ThreadId;
     provider: ProviderKind;
   } | null>(null);
   const featureFlags = useFeatureFlags();
   const showDebugTaskBanner = import.meta.env.DEV && featureFlags["show-debug-task-banner"];
-  const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const serverSettingsQuery = useQuery(serverSettingsQueryOptions());
   const composerModelHintByProvider = useMemo<Record<ProviderKind, string | null>>(() => {
     const threadModelSelection = activeThread?.modelSelection ?? null;
@@ -3016,11 +3040,8 @@ export default function ChatView({
     automationProjects,
     automationThreads,
     automationData,
-    automationUpdateMutation,
     automationDraftForm,
     setAutomationDraftForm,
-    automationEditingDefinition,
-    setAutomationEditingDefinition,
     automationDraftWarnings,
     setAutomationDraftWarnings,
     setAutomationDraftWarningContext,
@@ -3042,10 +3063,8 @@ export default function ChatView({
     toggleAutomationWarning,
     updateAutomationDraftForm,
     resetAutomationDraftState,
-    openAutomationEditDialog,
   } = useChatAutomationSetup({
     threadId,
-    activeProjectId,
     hasLiveTurn,
     promptRef,
     setComposerDraftPrompt,
@@ -3341,6 +3360,7 @@ export default function ChatView({
   // --- Pinned messages & notes (per-thread, server-synced through sidepanel commands) ---
   const pinnedMessages = activeThread?.pinnedMessages ?? EMPTY_PINNED_MESSAGES;
   const threadMarkers = activeThread?.threadMarkers ?? EMPTY_THREAD_MARKERS;
+  const goalAchievements = activeThread?.goalAchievements ?? EMPTY_GOAL_ACHIEVEMENTS;
   const threadNotes = activeThread?.notes ?? "";
   const pinnedMessageIds = useMemo(
     () => new Set(pinnedMessages.map((pin) => pin.messageId)),
@@ -7071,74 +7091,8 @@ export default function ChatView({
     ],
   );
 
-  const updateAutomationFromForm = useCallback(
-    async (input: {
-      readonly definition: AutomationDefinition;
-      readonly form: AutomationFormState;
-      readonly warnings: readonly AutomationDraftWarning[];
-      readonly acknowledgedWarningIds: ReadonlySet<AutomationDraftWarningId>;
-      readonly providerOptions?: ProviderStartOptions;
-    }): Promise<boolean> => {
-      if (automationDraftSubmittingRef.current) {
-        return false;
-      }
-      if (!isFormSubmittable(input.form)) {
-        return false;
-      }
-      if (hasBlockingAutomationDraftWarnings(input.warnings, input.acknowledgedWarningIds)) {
-        return false;
-      }
-      const acknowledgedRisks = acknowledgedRiskIdsForFormWarnings(
-        input.warnings,
-        input.acknowledgedWarningIds,
-      );
-      automationDraftSubmittingRef.current = true;
-      setIsAutomationDraftSubmitting(true);
-      return await (async () => {
-        const providerOptions =
-          input.providerOptions ??
-          providerOptionsForAutomationEdit(
-            input.definition,
-            input.form,
-            providerOptionsForDispatch,
-          );
-        const updated = await automationUpdateMutation.mutateAsync(
-          updateInputFromForm(input.definition, input.form, providerOptions, acknowledgedRisks),
-        );
-        resetAutomationDraftState();
-        toastManager.add({
-          type: "success",
-          title: "Automation updated",
-          description: `${updated.name} - ${formatCadence(updated.schedule)}`,
-        });
-        return true;
-      })()
-        .catch(() => false)
-        .finally(() => {
-          automationDraftSubmittingRef.current = false;
-          setIsAutomationDraftSubmitting(false);
-        });
-    },
-    [
-      automationDraftSubmittingRef,
-      automationUpdateMutation,
-      providerOptionsForDispatch,
-      resetAutomationDraftState,
-      setIsAutomationDraftSubmitting,
-    ],
-  );
-
   const submitAutomationDraft = useCallback(async () => {
     if (!automationDraftForm) {
-      return;
-    }
-    if (automationEditingDefinition) {
-      await updateAutomationFromForm({
-        definition: automationEditingDefinition,
-        form: automationDraftForm,
-        warnings: automationDraftWarnings,
-        acknowledgedWarningIds: acknowledgedAutomationWarnings,
-      });
       return;
     }
     if (
@@ -7159,12 +7113,10 @@ export default function ChatView({
     });
   }, [
     acknowledgedAutomationWarnings,
-    automationEditingDefinition,
     automationDraftForm,
     automationDraftWarnings,
     createAutomationFromForm,
     prepareAutomationFormForCreate,
-    updateAutomationFromForm,
   ]);
 
   const restoreQueuedTurnToComposer = useCallback(
@@ -7611,7 +7563,6 @@ export default function ChatView({
             promptRef.current = restoredPrompt;
             setComposerDraftPrompt(activeThread.id, restoredPrompt);
           }
-          setAutomationEditingDefinition(null);
           setAutomationDraftWarningContext(automationDraft.warningContext);
           setAutomationDraftForm(automationDraft.form);
           setAutomationDraftWarnings(automationDraft.warnings);
@@ -10166,6 +10117,8 @@ export default function ChatView({
     setIsSlashStatusDialogOpen,
     handleStandaloneSlashCommand,
     handleSlashCommandSelection,
+    clearThreadGoal,
+    setThreadGoalPaused,
   } = useComposerSlashCommands({
     activeProject,
     activeThread,
@@ -10220,6 +10173,22 @@ export default function ChatView({
     setComposerDraftProviderModelOptions,
     editorActions: slashEditorActions,
   });
+
+  // Prefills "/goal <current text>" so editing reuses the same slash-command path
+  // that created the goal, mirroring how queued turns restore into the composer.
+  const editThreadGoalInComposer = useCallback(() => {
+    const currentGoal = activeThread?.goal?.trim();
+    if (!activeThread || !currentGoal) {
+      return;
+    }
+    const nextPrompt = `/goal ${currentGoal}`;
+    promptRef.current = nextPrompt;
+    clearComposerDraftContent(activeThread.id);
+    setComposerDraftPrompt(activeThread.id, nextPrompt);
+    setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
+    setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length));
+    scheduleComposerFocus();
+  }, [activeThread, clearComposerDraftContent, scheduleComposerFocus, setComposerDraftPrompt]);
 
   // Refreshed on every commit, in a layout effect rather than a passive one: the queued
   // dispatcher can run from the same commit's follow-up work, so there must be no window
@@ -11142,7 +11111,7 @@ export default function ChatView({
     onProjectInstructionsChange: setProjectInstructions,
     onCopyProjectInstructionsToNotes: handleCopyProjectInstructionsToNotes,
     onToggleDiff,
-    onOpenAutomation: openAutomationEditDialog,
+    onOpenAutomation: (definition: AutomationDefinition) => onOpenAutomation(definition.id),
     onOpenGithubRepository: openBrowserUrl,
     onJumpToPinnedMessage: handleJumpToPinnedMessage,
     onTogglePinnedMessageDone: handleTogglePinnedMessageDone,
@@ -11173,6 +11142,8 @@ export default function ChatView({
   const showComposerActiveTaskListCard = Boolean(activeTaskList && !planSidebarOpen);
   const showComposerWorkflowRunCard = workflowRunState !== null;
   const showComposerSubagentStrip = composerSubagentStripItems.length > 0;
+  const activeThreadGoalText = activeThread?.goal?.trim() ?? "";
+  const showComposerGoalHeader = activeThreadGoalText.length > 0;
   // The workflow card already lists its run and member agents, so the generic
   // "N background agents" footer only counts tasks outside the workflow.
   const composerBackgroundTaskCount = workflowRunState
@@ -11267,6 +11238,23 @@ export default function ChatView({
                   showComposerSubagentStrip
                 }
               />
+              {showComposerGoalHeader && activeThread ? (
+                <ComposerGoalHeader
+                  goal={activeThreadGoalText}
+                  goalStartedAt={activeThread.goalStartedAt}
+                  goalPausedAt={activeThread.goalPausedAt}
+                  onEdit={editThreadGoalInComposer}
+                  onSetPaused={setThreadGoalPaused}
+                  onClear={clearThreadGoal}
+                  attachedToPrevious={
+                    showComposerLiveChangesHeader ||
+                    showComposerActiveTaskListCard ||
+                    showComposerWorkflowRunCard ||
+                    showComposerSubagentStrip ||
+                    queuedComposerTurns.length > 0
+                  }
+                />
+              ) : null}
               {/* Pending approvals and AskUserQuestion prompts both render as a detached
                   card floating just above the composer (padding gives the measured gap),
                   instead of a banner fused into the composer surface. An approval takes
@@ -11872,7 +11860,6 @@ export default function ChatView({
       {automationDraftForm ? (
         <AutomationDialog
           open={automationDraftOpen}
-          editing={automationEditingDefinition !== null}
           form={automationDraftForm}
           projects={automationProjects}
           threads={automationThreads}
@@ -11882,7 +11869,7 @@ export default function ChatView({
           onOpenChange={setAutomationDraftDialogOpen}
           onFormChange={updateAutomationDraftForm}
           onSubmit={submitAutomationDraft}
-          busy={isAutomationDraftSubmitting || automationUpdateMutation.isPending}
+          busy={isAutomationDraftSubmitting}
         />
       ) : null}
 
@@ -12018,6 +12005,7 @@ export default function ChatView({
                     canPinMessage={canPinMessage}
                     onTogglePinMessage={handleTogglePinMessageGuarded}
                     threadMarkers={threadMarkers}
+                    goalAchievements={goalAchievements}
                     enteringUserMessageIds={enteringUserMessageIds}
                     tailAnchorMessageId={
                       tailAnchor !== null && tailAnchor.threadId === activeThread.id
