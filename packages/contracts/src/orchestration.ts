@@ -241,10 +241,14 @@ export const DEFAULT_TURN_DISPATCH_MODE: TurnDispatchMode = "queue";
 // Absent is treated as "user"; only server-dispatched turns carry the flag.
 export const MessageDispatchOrigin = Schema.Literals(["user", "automation", "agent"]);
 export type MessageDispatchOrigin = typeof MessageDispatchOrigin.Type;
+// "automation_run" marks only the per-run throwaway threads standalone automations
+// create. Dedicated automations' own threads stay unmarked: they are persistent
+// conversations the user keeps, not run artifacts.
 export const ThreadCreationSource = Schema.Literals([
   "synara_mcp",
   "external_mcp",
   "provider_native",
+  "automation_run",
 ]);
 export type ThreadCreationSource = typeof ThreadCreationSource.Type;
 export const ProviderReviewTarget = Schema.Union([
@@ -293,6 +297,7 @@ export const MAX_PINNED_PROJECTS = 3;
 const CHAT_ATTACHMENT_ID_MAX_CHARS = 128;
 export const CHAT_ASSISTANT_SELECTION_TEXT_MAX_CHARS = 4_000;
 export const THREAD_NOTES_MAX_CHARS = 16_384;
+export const THREAD_GOAL_MAX_CHARS = 4_096;
 export const PINNED_MESSAGES_MAX_COUNT = 100;
 export const PINNED_MESSAGE_LABEL_MAX_CHARS = 60;
 export const THREAD_MARKERS_MAX_COUNT = 200;
@@ -641,6 +646,36 @@ export type OrchestrationThreadPullRequest = typeof OrchestrationThreadPullReque
  */
 export const ThreadNotes = Schema.String.check(Schema.isMaxLength(THREAD_NOTES_MAX_CHARS));
 export type ThreadNotes = typeof ThreadNotes.Type;
+export const ThreadGoal = Schema.String.check(Schema.isMaxLength(THREAD_GOAL_MAX_CHARS));
+export type ThreadGoal = typeof ThreadGoal.Type;
+/**
+ * Goal pursuit timing. `goalStartedAt` is (re)stamped by the decider whenever a
+ * non-empty goal is set and rebased on resume so `now - goalStartedAt` is always
+ * the active pursuit duration. A non-null `goalPausedAt` means the goal is
+ * paused: injection stops and the elapsed clock freezes at `goalPausedAt`.
+ */
+export const ThreadGoalTimingFields = {
+  goalStartedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  goalPausedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+};
+/**
+ * A completed goal, recorded when the decider processes a `goalAchieved` intent.
+ * `elapsedMs` is the pause-adjusted pursuit duration (null for legacy goals with
+ * no recorded start) and `turnId` anchors the transcript "Goal achieved" badge to
+ * the turn that was live when the goal completed.
+ */
+export const ThreadGoalAchievement = Schema.Struct({
+  goal: ThreadGoal,
+  achievedAt: IsoDateTime,
+  elapsedMs: Schema.NullOr(Schema.Number),
+  turnId: Schema.NullOr(TurnId),
+});
+export type ThreadGoalAchievement = typeof ThreadGoalAchievement.Type;
+export const THREAD_GOAL_ACHIEVEMENTS_MAX_COUNT = 20;
+export const ThreadGoalAchievements = Schema.Array(ThreadGoalAchievement).check(
+  Schema.isMaxLength(THREAD_GOAL_ACHIEVEMENTS_MAX_COUNT),
+);
+export type ThreadGoalAchievements = typeof ThreadGoalAchievements.Type;
 export const PinnedMessageLabel = TrimmedNonEmptyString.check(
   Schema.isMaxLength(PINNED_MESSAGE_LABEL_MAX_CHARS),
 );
@@ -798,6 +833,9 @@ export const OrchestrationThread = Schema.Struct({
   pinnedMessages: Schema.optional(ThreadPinnedMessages),
   threadMarkers: Schema.optional(ThreadMarkers),
   notes: Schema.optional(ThreadNotes),
+  goal: Schema.optional(ThreadGoal),
+  ...ThreadGoalTimingFields,
+  goalAchievements: Schema.optional(ThreadGoalAchievements),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(Schema.withDecodingDefault(() => [])),
   activities: Schema.Array(OrchestrationThreadActivity),
@@ -881,6 +919,8 @@ export const OrchestrationThreadShell = Schema.Struct({
     Schema.withDecodingDefault(() => null),
   ),
   handoff: Schema.NullOr(ThreadHandoff).pipe(Schema.withDecodingDefault(() => null)),
+  goal: Schema.optional(ThreadGoal),
+  ...ThreadGoalTimingFields,
   session: Schema.NullOr(OrchestrationSession),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
@@ -1193,6 +1233,12 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   pinnedMessages: Schema.optional(ThreadPinnedMessages),
   threadMarkers: Schema.optional(ThreadMarkers),
   notes: Schema.optional(ThreadNotes),
+  goal: Schema.optional(ThreadGoal),
+  // Desired paused state; the decider stamps the authoritative goal timestamps.
+  goalPaused: Schema.optional(Schema.Boolean),
+  // Marks the active goal accomplished: the decider records a ThreadGoalAchievement
+  // (with pause-adjusted elapsed time) and clears the goal in the same event.
+  goalAchieved: Schema.optional(Schema.Boolean),
 });
 
 const ThreadPinnedMessageAddCommand = Schema.Struct({
@@ -1837,6 +1883,10 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   pinnedMessages: Schema.optional(ThreadPinnedMessages),
   threadMarkers: Schema.optional(ThreadMarkers),
   notes: Schema.optional(ThreadNotes),
+  goal: Schema.optional(ThreadGoal),
+  goalStartedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  goalPausedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  goalAchievements: Schema.optional(ThreadGoalAchievements),
   updatedAt: IsoDateTime,
 });
 
