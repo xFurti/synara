@@ -35,7 +35,9 @@ import {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const PULL_REQUEST_DIFF_MAX_BYTES = 8 * 1024 * 1024;
-const GITHUB_HOST = "github.com";
+export const GITHUB_HOST = "github.com";
+
+export const repositorySelector = (repository: string) => `${GITHUB_HOST}/${repository}`;
 
 export const PULL_REQUEST_LIST_JSON_FIELDS =
   "number,title,url,author,headRefName,baseRefName,state,isDraft,additions,deletions,updatedAt,createdAt,reviewDecision,reviewRequests,labels,mergedAt,mergeable";
@@ -1328,7 +1330,12 @@ const makeGitHubCli = Effect.sync(() => {
   // One implementation behind both list methods so the field list, decoding, and
   // normalization cannot drift between the open-only and any-state lookups.
   const listPullRequestsWithState = (
-    input: { readonly cwd: string; readonly headSelector: string; readonly limit?: number },
+    input: {
+      readonly cwd: string;
+      readonly headSelector: string;
+      readonly repository?: string;
+      readonly limit?: number;
+    },
     options: {
       readonly state: "open" | "all";
       readonly defaultLimit: number;
@@ -1340,6 +1347,7 @@ const makeGitHubCli = Effect.sync(() => {
       args: [
         "pr",
         "list",
+        ...(input.repository ? ["--repo", repositorySelector(input.repository)] : []),
         "--head",
         input.headSelector,
         "--state",

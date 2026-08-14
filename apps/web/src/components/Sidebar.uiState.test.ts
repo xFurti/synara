@@ -42,6 +42,7 @@ describe("Sidebar.uiState", () => {
       dismissedThreadStatusKeyByThreadId: {},
       lastThreadRoute: null,
       activityViewEnabled: false,
+      collapsedBranchGroupThreadIds: [],
     });
   });
 
@@ -62,6 +63,7 @@ describe("Sidebar.uiState", () => {
         splitViewId: "split-456",
       },
       activityViewEnabled: true,
+      collapsedBranchGroupThreadIds: ["thread-main", "thread-main", ""],
     });
 
     expect(readSidebarUiState()).toEqual({
@@ -80,6 +82,7 @@ describe("Sidebar.uiState", () => {
         splitViewId: "split-456",
       },
       activityViewEnabled: true,
+      collapsedBranchGroupThreadIds: ["thread-main"],
     });
   });
 
@@ -121,7 +124,22 @@ describe("Sidebar.uiState", () => {
         threadId: "thread-123",
       },
       activityViewEnabled: false,
+      collapsedBranchGroupThreadIds: [],
     });
+  });
+
+  it("sanitizes persisted collapsed branch group ids", () => {
+    window.localStorage.setItem(
+      "synara:sidebar-ui:v1",
+      JSON.stringify({
+        collapsedBranchGroupThreadIds: ["thread-main", 42, "", null, "thread-other", "thread-main"],
+      }),
+    );
+
+    expect(readSidebarUiState().collapsedBranchGroupThreadIds).toEqual([
+      "thread-main",
+      "thread-other",
+    ]);
   });
 
   it("migrates legacy all-or-nothing show-more state to one extra page", () => {
@@ -161,6 +179,7 @@ describe("Sidebar.uiState", () => {
       dismissedThreadStatusKeyByThreadId: {},
       lastThreadRoute: null,
       activityViewEnabled: false,
+      collapsedBranchGroupThreadIds: [],
     });
   });
 });

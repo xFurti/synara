@@ -133,7 +133,11 @@ import {
   isSidebarThreadVisible,
 } from "../storeSelectors";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
-import { useThreadPullRequests, type ThreadPullRequest } from "../hooks/useThreadPullRequests";
+import {
+  useThreadPullRequests,
+  resolveThreadPullRequestFallback,
+  type ThreadPullRequest,
+} from "../hooks/useThreadPullRequests";
 import {
   providerComposerCapabilitiesQueryOptions,
   supportsThreadImport,
@@ -181,7 +185,7 @@ import { shouldRenderTerminalWorkspace } from "./ChatView.logic";
 import { CHAT_SURFACE_HEADER_HEIGHT_CLASS } from "./chat/chatHeaderControls";
 import { SidebarLeadingControls } from "./SidebarHeaderNavigationControls";
 import { ProjectSidebarIcon } from "./ProjectSidebarIcon";
-import { ThreadHoverCardContent } from "./ThreadHoverCardContent";
+import { ThreadHoverCardContent, type ThreadHoverCardBranchChild } from "./ThreadHoverCardContent";
 import { ProjectHoverCardContent } from "./ProjectHoverCardContent";
 import {
   SIDEBAR_HOVER_CARD_POPUP_PROPS,
@@ -194,6 +198,7 @@ import {
   createThreadHoverCardAnchor,
 } from "./sidebarHoverCardAnchors";
 import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "./ui/preview-card";
+import { DisclosureRegion } from "./ui/DisclosureRegion";
 import { hasUnreadActivity as hasUnreadActivityOutsideActiveThread } from "./SidebarActivityView.logic";
 import { SidebarActivityView } from "./SidebarActivityView";
 import { SidebarIconButton, sidebarIconButtonSlotClass } from "./SidebarIconButton";
@@ -290,6 +295,7 @@ import {
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import {
+  buildActiveBranchGroupChildrenMap,
   buildProjectThreadTree,
   derivePinnedProjectIdsForSidebar,
   deriveSidebarProjectData,
@@ -340,6 +346,7 @@ import { DESKTOP_TOP_BAR_TRAFFIC_LIGHT_GUTTER_CLASS } from "~/hooks/useDesktopTo
 import { cn } from "~/lib/utils";
 import {
   disclosureContentClassName,
+  disclosureFadeClassName,
   disclosureShellClassName,
   DISCLOSURE_INNER_CLASS,
 } from "~/lib/disclosureMotion";
@@ -590,6 +597,54 @@ function ProjectRunIndicatorDot({ className }: { className?: string }) {
   );
 }
 
+/**
+ * Branch-folder count chip: fades in/out with the shared disclosure motion and
+ * briefly scales when a new branch joins the folder so the change reads at a
+ * glance even while the folder is collapsed.
+ */
+function BranchGroupCountChip({
+  label,
+  childCount,
+  visible,
+}: {
+  label: string;
+  childCount: number;
+  visible: boolean;
+}) {
+  const [pulse, setPulse] = useState(false);
+  const previousChildCountRef = useRef(childCount);
+
+  useEffect(() => {
+    if (childCount > previousChildCountRef.current) {
+      previousChildCountRef.current = childCount;
+      setPulse(true);
+      const timer = window.setTimeout(() => setPulse(false), 260);
+      return () => window.clearTimeout(timer);
+    }
+    previousChildCountRef.current = childCount;
+    return undefined;
+  }, [childCount]);
+
+  return (
+    <span
+      aria-hidden={visible ? undefined : true}
+      className={cn(
+        "pointer-events-none mr-1 text-[length:var(--app-font-size-ui-meta,10px)] text-muted-foreground/45",
+        // Fades on hover so the row's pin/archive actions can use the same
+        // slot, like the other meta chips, and uses the shared 220ms disclosure
+        // fade so the count appears as the folder finishes closing. A fade-only
+        // toggle: translating the chip would push it out of the row onto the
+        // neighboring text.
+        sidebarHoverRevealHideClassName("thread-row"),
+        disclosureFadeClassName(visible),
+        pulse && "scale-110",
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
 /** Meta chips fade on row hover so pin/archive actions can occupy the same slot. */
 const THREAD_ROW_META_CHIP_HOVER_FADE_CLASS_NAME = cn(
   "flex shrink-0 items-center",
@@ -754,6 +809,24 @@ function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
     tooltip: `#${pr.number} ${presentation.label}: ${pr.title}`,
     url: pr.url,
   };
+}
+
+// Branch-folder children can be collapsed away from the visible set, so their
+// PR rows miss the live git-status polling (which is scoped to rendered rows by
+// design). The persisted PR reference is still authoritative enough for the
+// folder's PR badge, hover-card list, and "Open PRs" action.
+function resolveBranchChildPr(
+  child: SidebarThreadSummary,
+  prByThreadId: ReadonlyMap<ThreadId, ThreadPr>,
+): ThreadPr | null {
+  const livePr = prByThreadId.get(child.id);
+  if (livePr) {
+    return livePr;
+  }
+  return resolveThreadPullRequestFallback({
+    branch: child.branch,
+    lastKnownPr: child.lastKnownPr,
+  });
 }
 
 function ThreadPrStatusBadge({
@@ -1578,6 +1651,20 @@ export default function Sidebar() {
   const [activityViewEnabled, setActivityViewEnabled] = useState(
     () => readSidebarUiState().activityViewEnabled,
   );
+  const [collapsedBranchGroupThreadIds, setCollapsedBranchGroupThreadIds] = useState<string[]>(
+    () => readSidebarUiState().collapsedBranchGroupThreadIds,
+  );
+  const collapsedBranchGroupThreadIdSet = useMemo(
+    () => new Set(collapsedBranchGroupThreadIds.map((threadId) => ThreadId.makeUnsafe(threadId))),
+    [collapsedBranchGroupThreadIds],
+  );
+  const toggleBranchGroupCollapse = useCallback((threadId: ThreadId) => {
+    setCollapsedBranchGroupThreadIds((current) =>
+      current.includes(threadId)
+        ? current.filter((currentThreadId) => currentThreadId !== threadId)
+        : [...current, threadId],
+    );
+  }, []);
   const [activityVisibleThreadIds, setActivityVisibleThreadIds] = useState<readonly ThreadId[]>([]);
   const handleActivityVisibleThreadIdsChange = useCallback((threadIds: readonly ThreadId[]) => {
     setActivityVisibleThreadIds((current) => {
@@ -1604,6 +1691,7 @@ export default function Sidebar() {
         setDismissedThreadStatusKeyByThreadId(state.dismissedThreadStatusKeyByThreadId);
         setLastThreadRoute(state.lastThreadRoute);
         setActivityViewEnabled(state.activityViewEnabled);
+        setCollapsedBranchGroupThreadIds(state.collapsedBranchGroupThreadIds);
       }),
     [],
   );
@@ -1886,10 +1974,7 @@ export default function Sidebar() {
       ),
     [activeSpaceNonStudioSidebarTreeThreads, isOnStudio, pinnedThreadIds, studioSidebarTreeThreads],
   );
-  const openPrLink = useCallback((event: MouseEvent<HTMLElement>, prUrl: string) => {
-    event.preventDefault();
-    event.stopPropagation();
-
+  const openExternalLink = useCallback((url: string) => {
     const api = readNativeApi();
     if (!api) {
       toastManager.add({
@@ -1899,14 +1984,22 @@ export default function Sidebar() {
       return;
     }
 
-    void api.shell.openExternal(prUrl).catch((error) => {
+    void api.shell.openExternal(url).catch((error) => {
       toastManager.add({
         type: "error",
-        title: "Unable to open PR link",
+        title: "Unable to open link",
         description: error instanceof Error ? error.message : "An error occurred.",
       });
     });
   }, []);
+  const openPrLink = useCallback(
+    (event: MouseEvent<HTMLElement>, prUrl: string) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openExternalLink(prUrl);
+    },
+    [openExternalLink],
+  );
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
@@ -2914,10 +3007,11 @@ export default function Sidebar() {
       position: { x: number; y: number },
       options?: {
         extraItems?: Array<{
-          id: "return-to-single-chat";
+          id: string;
           label: string;
+          separatorBefore?: boolean;
         }>;
-        onExtraAction?: (itemId: "return-to-single-chat") => Promise<void> | void;
+        onExtraAction?: (itemId: string) => Promise<void> | void;
       },
     ) => {
       const api = readNativeApi();
@@ -3122,6 +3216,12 @@ export default function Sidebar() {
         await options?.onExtraAction?.("return-to-single-chat");
         return;
       }
+      // Any caller-provided extra item is routed back to the caller so the menu
+      // stays open to per-surface affordances without knowing every action.
+      if (typeof clicked === "string" && options?.extraItems?.some((item) => item.id === clicked)) {
+        await options?.onExtraAction?.(clicked);
+        return;
+      }
       if (clicked === "archive") {
         await confirmAndArchiveThread(threadId);
         return;
@@ -3257,11 +3357,13 @@ export default function Sidebar() {
         dismissedThreadStatusKeyByThreadId,
         lastThreadRoute: nextLastThreadRoute,
         activityViewEnabled,
+        collapsedBranchGroupThreadIds,
       });
     },
     [
       activityViewEnabled,
       chatSectionExpanded,
+      collapsedBranchGroupThreadIds,
       chatThreadListExtraPages,
       dismissedThreadStatusKeyByThreadId,
       threadListExtraPagesByProjectCwd,
@@ -3866,10 +3968,12 @@ export default function Sidebar() {
         activeSidebarThreadId: activeSidebarThreadId ?? undefined,
         previewLimit: THREAD_PREVIEW_LIMIT,
         previewPageSize: THREAD_PREVIEW_PAGE_SIZE,
+        collapsedBranchGroupThreadIds: collapsedBranchGroupThreadIdSet,
         resolveThreadStatus: resolveThreadStatusForSidebar,
       }),
     [
       activeSidebarThreadId,
+      collapsedBranchGroupThreadIdSet,
       threadListExtraPagesByProjectCwd,
       pinnedThreadIds,
       sortedSidebarThreadsByProjectId,
@@ -3896,10 +4000,12 @@ export default function Sidebar() {
       activeSidebarThreadId: activeSidebarThreadId ?? undefined,
       previewLimit: THREAD_PREVIEW_LIMIT,
       previewPageSize: THREAD_PREVIEW_PAGE_SIZE,
+      collapsedBranchGroupThreadIds: collapsedBranchGroupThreadIdSet,
       resolveThreadStatus: resolveThreadStatusForSidebar,
     });
   }, [
     activeSidebarThreadId,
+    collapsedBranchGroupThreadIdSet,
     isOnStudio,
     threadListExtraPagesByProjectCwd,
     pinnedThreadIds,
@@ -3949,6 +4055,12 @@ export default function Sidebar() {
         }
         return Object.fromEntries(nextEntries);
       });
+      setCollapsedBranchGroupThreadIds((current) => {
+        const nextIds = current.filter((threadId) =>
+          retainedThreadIds.has(ThreadId.makeUnsafe(threadId)),
+        );
+        return nextIds.length === current.length ? current : nextIds;
+      });
     }, 0);
     return () => window.clearTimeout(settle);
   }, [sidebarThreads]);
@@ -3961,11 +4073,13 @@ export default function Sidebar() {
       dismissedThreadStatusKeyByThreadId,
       lastThreadRoute,
       activityViewEnabled,
+      collapsedBranchGroupThreadIds,
     });
   }, [
     activityViewEnabled,
     chatSectionExpanded,
     chatThreadListExtraPages,
+    collapsedBranchGroupThreadIds,
     dismissedThreadStatusKeyByThreadId,
     threadListExtraPagesByProjectCwd,
     lastThreadRoute,
@@ -4077,11 +4191,59 @@ export default function Sidebar() {
     () => sidebarTreeThreads.filter((thread) => visibleSidebarThreadIdSet.has(thread.id)),
     [sidebarTreeThreads, visibleSidebarThreadIdSet],
   );
+  // Active branch folders (root → children) across the tree. Drives the folder
+  // hover card's child list, the "New branch thread" / "Open PRs" menu actions,
+  // and the "Collapse all groups" affordance.
+  const branchGroupChildrenByRootId = useMemo(
+    () => buildActiveBranchGroupChildrenMap(sidebarTreeThreads),
+    [sidebarTreeThreads],
+  );
+  // Poll git status for visible rows plus the branch-folder children of visible
+  // folder roots. Collapsed children are not rendered rows, so without them here
+  // the folder hover card would fall back to persisted PR data (often null) and
+  // show gray branch icons even when the branch has a live open/merged PR.
+  const prPollThreads = useMemo(() => {
+    const visibleRootThreadIds = new Set<ThreadId>();
+    for (const thread of visibleSidebarThreads) {
+      visibleRootThreadIds.add(thread.id);
+    }
+    const threadsById = new Map<ThreadId, SidebarThreadSummary>();
+    for (const thread of visibleSidebarThreads) {
+      threadsById.set(thread.id, thread);
+    }
+    for (const [rootThreadId, children] of branchGroupChildrenByRootId) {
+      if (!visibleRootThreadIds.has(rootThreadId)) {
+        continue;
+      }
+      for (const child of children) {
+        threadsById.set(child.id, child);
+      }
+    }
+    return [...threadsById.values()];
+  }, [branchGroupChildrenByRootId, visibleSidebarThreads]);
   // PR badges only render on visible rows, so keep git/PR query setup off hidden project history.
   const prByThreadId = useThreadPullRequests({
-    threads: visibleSidebarThreads,
+    threads: prPollThreads,
     projectCwdById,
   });
+  const branchGroupRootThreadIds = useMemo(
+    () => [...branchGroupChildrenByRootId.keys()],
+    [branchGroupChildrenByRootId],
+  );
+  const allBranchGroupsCollapsed =
+    branchGroupRootThreadIds.length > 0 &&
+    branchGroupRootThreadIds.every((threadId) => collapsedBranchGroupThreadIds.includes(threadId));
+  const toggleAllBranchGroupCollapse = useCallback(() => {
+    const currentlyExpandedRootIds = branchGroupRootThreadIds.filter(
+      (threadId) => !collapsedBranchGroupThreadIds.includes(threadId),
+    );
+    const nextCollapsedSet = allBranchGroupsCollapsed
+      ? collapsedBranchGroupThreadIds.filter(
+          (threadId) => !branchGroupRootThreadIds.includes(ThreadId.makeUnsafe(threadId)),
+        )
+      : [...new Set([...collapsedBranchGroupThreadIds, ...currentlyExpandedRootIds])];
+    setCollapsedBranchGroupThreadIds(nextCollapsedSet);
+  }, [allBranchGroupsCollapsed, branchGroupRootThreadIds, collapsedBranchGroupThreadIds]);
   const isManualProjectSorting = appSettings.sidebarProjectSortOrder === "manual";
   const threadJumpCommandByThreadId = useMemo(() => {
     const mapping = new Map<ThreadId, NonNullable<ReturnType<typeof threadJumpCommandForIndex>>>();
@@ -4296,6 +4458,7 @@ export default function Sidebar() {
     thread: SidebarThreadSummary,
     hoverAnchorId: string,
     isActive: boolean,
+    branchChildren?: readonly SidebarThreadSummary[],
   ) {
     const hoverProject = projectById.get(thread.projectId) ?? null;
     const hoverMetadata = resolveThreadHoverCardMetadata({
@@ -4306,6 +4469,18 @@ export default function Sidebar() {
       status: resolveThreadStatusForSidebar(thread),
       isActive,
     });
+    const hoverBranchChildren: ThreadHoverCardBranchChild[] | undefined = branchChildren?.map(
+      (child) => {
+        const childPrStatus = prStatusIndicator(resolveBranchChildPr(child, prByThreadId));
+        return {
+          title: child.title,
+          timeLabel: formatRelativeTime(child.updatedAt ?? child.createdAt),
+          prColorClass: childPrStatus?.colorClass ?? null,
+          prIcon: childPrStatus?.icon ?? null,
+          status: resolveThreadStatusForSidebar(child),
+        };
+      },
+    );
     return (
       <TooltipPopup
         {...SIDEBAR_HOVER_CARD_POPUP_PROPS}
@@ -4326,6 +4501,7 @@ export default function Sidebar() {
           worktreeName={hoverMetadata.worktreeName}
           model={resolveThreadModelSummary(thread.modelSelection)}
           status={hoverStatus}
+          branchChildren={hoverBranchChildren}
         />
       </TooltipPopup>
     );
@@ -4515,6 +4691,8 @@ export default function Sidebar() {
     // their top-level rows align flush like pinned rows instead of the indented
     // column used for project-nested threads.
     topLevel = false,
+    branchChildCount?: number,
+    branchGroupStatus?: ThreadStatusPill | null,
   ) {
     const threadTerminalState = selectThreadTerminalState(terminalStateByThreadId, thread.id);
     const threadEntryPoint = threadTerminalState.entryPoint;
@@ -4545,6 +4723,20 @@ export default function Sidebar() {
       threadAutomations: automationsByThreadId.get(thread.id),
     });
     const isSubagentThread = Boolean(thread.parentThreadId);
+    const isBranchGroupParent = (branchChildCount ?? 0) > 0;
+    const isBranchGroupChild = !isSubagentThread && depth > 0;
+    const branchGroupExpanded =
+      isBranchGroupParent && !collapsedBranchGroupThreadIdSet.has(thread.id);
+    const branchGroupChildCountLabel = `${branchChildCount} ${pluralize(branchChildCount ?? 0, "branch", "branches")}`;
+    const branchGroupChildren = isBranchGroupParent
+      ? (branchGroupChildrenByRootId.get(thread.id) ?? [])
+      : undefined;
+    const branchGroupPrCount = branchGroupChildren
+      ? branchGroupChildren.filter((child) => resolveBranchChildPr(child, prByThreadId)?.url).length
+      : 0;
+    // Children nest under a bordered sub-list (the folder's guide line), so the
+    // per-row indent only needs a small optical nudge.
+    const branchIndentPx = isBranchGroupChild ? 8 : 0;
     const leadingPrStatus =
       isSubagentThread || thread.forkSourceThreadId || thread.sidechatSourceThreadId
         ? null
@@ -4594,7 +4786,13 @@ export default function Sidebar() {
                     ? "pr-7.5"
                     : resolveThreadRowTrailingReserveClass({
                         metaChipCount: showCompactMeta ? rightMetaChips.length : 0,
-                        hasTrailingGlyph: Boolean(threadStatus) || Boolean(threadJumpLabel),
+                        hasTrailingGlyph:
+                          Boolean(threadStatus) ||
+                          Boolean(threadJumpLabel) ||
+                          (isBranchGroupParent &&
+                            !branchGroupExpanded &&
+                            branchGroupStatus !== null),
+                        branchCountChip: isBranchGroupParent && !branchGroupExpanded,
                       }),
                 )}
                 draggable
@@ -4646,6 +4844,65 @@ export default function Sidebar() {
                   void handleThreadContextMenu(thread.id, {
                     x: event.clientX,
                     y: event.clientY,
+                    ...(isBranchGroupParent
+                      ? {
+                          extraItems: [
+                            {
+                              id: "branch-group-toggle",
+                              label: branchGroupExpanded
+                                ? "Collapse branch group"
+                                : "Expand branch group",
+                              separatorBefore: true,
+                            },
+                            {
+                              id: "branch-group-new-thread",
+                              label: "New branch thread",
+                            },
+                            ...(branchGroupPrCount > 0
+                              ? [
+                                  {
+                                    id: "branch-group-open-prs",
+                                    label: `Open ${branchGroupPrCount} ${
+                                      branchGroupPrCount === 1 ? "pull request" : "pull requests"
+                                    }`,
+                                  },
+                                ]
+                              : []),
+                            ...(branchGroupRootThreadIds.length > 1
+                              ? [
+                                  {
+                                    id: "branch-group-collapse-all",
+                                    label: allBranchGroupsCollapsed
+                                      ? "Expand all branch groups"
+                                      : "Collapse all branch groups",
+                                  },
+                                ]
+                              : []),
+                          ],
+                          onExtraAction: async (itemId: string) => {
+                            if (itemId === "branch-group-toggle") {
+                              toggleBranchGroupCollapse(thread.id);
+                              return;
+                            }
+                            if (itemId === "branch-group-new-thread") {
+                              activateThreadFromSidebarIntent(thread.id);
+                              return;
+                            }
+                            if (itemId === "branch-group-open-prs") {
+                              for (const child of branchGroupChildren ?? []) {
+                                const prUrl = resolveBranchChildPr(child, prByThreadId)?.url;
+                                if (prUrl) {
+                                  openExternalLink(prUrl);
+                                }
+                              }
+                              return;
+                            }
+                            if (itemId === "branch-group-collapse-all") {
+                              toggleAllBranchGroupCollapse();
+                            }
+                          },
+                        }
+                      : {}),
                   });
                 }}
               />
@@ -4659,6 +4916,42 @@ export default function Sidebar() {
               isActive={isActive}
               variant="standard"
               subagentIndentPx={subagentIndentPx}
+              nestedIndentPx={branchIndentPx}
+              leadingExtra={
+                isBranchGroupParent ? (
+                  <button
+                    type="button"
+                    aria-label={
+                      branchGroupExpanded
+                        ? `Collapse ${branchGroupChildCountLabel}`
+                        : `Expand ${branchGroupChildCountLabel}`
+                    }
+                    aria-expanded={branchGroupExpanded}
+                    title={branchGroupChildCountLabel}
+                    className={cn(
+                      "relative z-20 inline-flex size-5 shrink-0 -ml-1.5 cursor-pointer items-center justify-center rounded-sm transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring",
+                      SIDEBAR_ROW_LABEL_TEXT_CLASS_NAME,
+                    )}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      toggleBranchGroupCollapse(thread.id);
+                    }}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onPointerUp={(event) => event.stopPropagation()}
+                    onDoubleClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onContextMenu={(event) => event.stopPropagation()}
+                  >
+                    <DisclosureChevron
+                      open={branchGroupExpanded}
+                      className="size-3 text-muted-foreground/55"
+                    />
+                  </button>
+                ) : undefined
+              }
               pendingStatusColorClass={
                 threadStatus?.label === "Pending Approval" ? threadStatus.colorClass : null
               }
@@ -4680,6 +4973,24 @@ export default function Sidebar() {
               }
             />
             <div className={cn("absolute top-1/2 flex -translate-y-1/2 items-center", "right-1.5")}>
+              {isBranchGroupParent ? (
+                <>
+                  {!branchGroupExpanded && branchGroupStatus ? (
+                    <span
+                      aria-label={`Folder status: ${branchGroupStatus.label}`}
+                      title={branchGroupStatus.label}
+                      className="mr-1 flex shrink-0 items-center"
+                    >
+                      <SidebarStatusTrailingGlyph status={branchGroupStatus} />
+                    </span>
+                  ) : null}
+                  <BranchGroupCountChip
+                    label={branchGroupChildCountLabel}
+                    childCount={branchChildCount ?? 0}
+                    visible={!branchGroupExpanded}
+                  />
+                </>
+              ) : null}
               {renderThreadRowTrailingCluster({
                 isSubagentThread,
                 threadJumpLabel,
@@ -4700,7 +5011,7 @@ export default function Sidebar() {
               })}
             </div>
           </TooltipTrigger>
-          {renderThreadHoverCardPopup(thread, hoverAnchorId, isActive)}
+          {renderThreadHoverCardPopup(thread, hoverAnchorId, isActive, branchGroupChildren)}
         </Tooltip>
       </SidebarMenuSubItem>
     );
@@ -4944,9 +5255,73 @@ export default function Sidebar() {
                 disclosureContentClassName(project.expanded),
               )}
             >
-              {visibleEntries.map((entry) =>
-                renderThreadRow(entry.thread, orderedProjectThreadIds, entry.depth),
-              )}
+              {(() => {
+                const renderedNodes: ReactNode[] = [];
+                let entryIndex = 0;
+                while (entryIndex < visibleEntries.length) {
+                  const entry = visibleEntries[entryIndex]!;
+                  const hasBranchGroup = (entry.branchChildCount ?? 0) > 0;
+                  renderedNodes.push(
+                    renderThreadRow(
+                      entry.thread,
+                      orderedProjectThreadIds,
+                      entry.depth,
+                      false,
+                      entry.branchChildCount,
+                      entry.branchGroupStatus,
+                    ),
+                  );
+                  if (!hasBranchGroup) {
+                    entryIndex += 1;
+                    continue;
+                  }
+
+                  // Branch-group children are contiguous right after their folder
+                  // row and render exactly once, inside an animated disclosure
+                  // region, so the folder open/close uses the shared 220ms toggle
+                  // motion like every other collapsible in the app.
+                  let childEndIndex = entryIndex + 1;
+                  while (
+                    childEndIndex < visibleEntries.length &&
+                    visibleEntries[childEndIndex]!.depth > 0 &&
+                    visibleEntries[childEndIndex]!.rootRowId === entry.rowId
+                  ) {
+                    childEndIndex += 1;
+                  }
+                  const childEntries = visibleEntries.slice(entryIndex + 1, childEndIndex);
+                  const branchGroupExpanded = !collapsedBranchGroupThreadIdSet.has(entry.thread.id);
+                  // The tree prunes collapsed children from the visible set, so the
+                  // region keeps its children mounted (from the stable folder map)
+                  // while closing — otherwise the grid would collapse an empty
+                  // region and the close would be instant instead of animated.
+                  const mountedBranchChildren =
+                    childEntries.length > 0
+                      ? childEntries
+                      : (branchGroupChildrenByRootId.get(entry.thread.id) ?? []);
+
+                  renderedNodes.push(
+                    <SidebarMenuSubItem key={`${entry.rowId}:branch-group`} className="w-full p-0">
+                      <DisclosureRegion
+                        open={branchGroupExpanded && childEntries.length > 0}
+                        contentClassName="py-0"
+                      >
+                        <SidebarMenuSub className="mx-0 my-0 w-full translate-x-0 border-border/40 px-1.5 py-0">
+                          {mountedBranchChildren.map((child) =>
+                            renderThreadRow(
+                              "thread" in child ? child.thread : child,
+                              orderedProjectThreadIds,
+                              entry.depth + 1,
+                              false,
+                            ),
+                          )}
+                        </SidebarMenuSub>
+                      </DisclosureRegion>
+                    </SidebarMenuSubItem>,
+                  );
+                  entryIndex = childEndIndex;
+                }
+                return renderedNodes;
+              })()}
 
               {(canShowMoreThreads || canShowLessThreads) && (
                 <SidebarMenuSubItem className="w-full">

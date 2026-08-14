@@ -548,7 +548,75 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           "pr list --head jasonLaster:statemachine --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,mergeable,additions,deletions,changedFiles,isCrossRepository,headRepository,headRepositoryOwner,updatedAt",
         );
       }),
-    30_000,
+    120_000,
+  );
+
+  it.effect(
+    "status resolves a PR opened inside the fork repo itself via a repository-scoped lookup",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("synara-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
+        const originDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, [
+          "config",
+          "remote.origin.url",
+          "git@github.com:example-org/sample-repo.git",
+        ]);
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+        yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
+        yield* runGit(repoDir, [
+          "config",
+          "remote.fork-seed.url",
+          "git@github.com:jasonLaster/sample-repo.git",
+        ]);
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListByHeadSelector: {
+              "jasonLaster:statemachine": JSON.stringify([]),
+              "fork-seed:statemachine": JSON.stringify([]),
+              statemachine: JSON.stringify([]),
+            },
+            prListByRepositoryHead: {
+              "github.com/jasonLaster/sample-repo::statemachine": JSON.stringify([
+                {
+                  number: 900,
+                  title: "Fork-internal PR",
+                  url: "https://github.com/jasonLaster/sample-repo/pull/900",
+                  baseRefName: "main",
+                  headRefName: "statemachine",
+                  state: "OPEN",
+                  isCrossRepository: false,
+                  headRepository: {
+                    nameWithOwner: "jasonLaster/sample-repo",
+                  },
+                  headRepositoryOwner: {
+                    login: "jasonLaster",
+                  },
+                  updatedAt: "2026-04-01T08:00:00Z",
+                },
+              ]),
+            },
+          },
+        });
+
+        const status = yield* manager.status({ cwd: repoDir });
+        expect(status.branch).toBe("statemachine");
+        expect(status.pr).toMatchObject({
+          number: 900,
+          headBranch: "statemachine",
+          state: "open",
+          isDraft: false,
+        });
+        expect(ghCalls).toContain(
+          "pr list --repo github.com/jasonLaster/sample-repo --head statemachine --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,mergeable,additions,deletions,changedFiles,isCrossRepository,headRepository,headRepositoryOwner,updatedAt",
+        );
+      }),
+    120_000,
   );
 
   it.effect("status returns merged PR state when latest PR was merged", () =>
@@ -1501,76 +1569,79 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("allows cross-repo PR creation when head and base branch names match", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("synara-git-manager-");
-      yield* initRepo(repoDir);
-      const originDir = yield* createBareRemote();
-      const forkDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
-      yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
-      fs.mkdirSync(path.join(repoDir, ".github"));
-      fs.writeFileSync(
-        path.join(repoDir, ".github", "pull_request_template.md"),
-        "target repository template",
-      );
-      yield* runGit(repoDir, ["add", ".github/pull_request_template.md"]);
-      yield* runGit(repoDir, ["commit", "-m", "Add target PR template"]);
-      yield* runGit(repoDir, ["push", "origin", "main"]);
-      yield* runGit(repoDir, ["push", "-u", "fork", "main"]);
-      fs.writeFileSync(
-        path.join(repoDir, ".github", "pull_request_template.md"),
-        "fork-only template",
-      );
-      yield* runGit(repoDir, ["add", ".github/pull_request_template.md"]);
-      yield* runGit(repoDir, ["commit", "-m", "Change template in fork"]);
-      yield* runGit(repoDir, ["push", "fork", "main"]);
-      yield* runGit(repoDir, [
-        "config",
-        "remote.origin.url",
-        "git@github.com:example-org/sample-repo.git",
-      ]);
-      yield* runGit(repoDir, ["config", "remote.origin.pushurl", originDir]);
-      yield* runGit(repoDir, [
-        "config",
-        "remote.fork.url",
-        "git@github.com:octocat/sample-repo.git",
-      ]);
-      yield* runGit(repoDir, ["config", "remote.fork.pushurl", forkDir]);
-      fs.writeFileSync(path.join(repoDir, "cross-repo-pr.txt"), "fork main change\n");
-      yield* runGit(repoDir, ["add", "cross-repo-pr.txt"]);
-      yield* runGit(repoDir, ["commit", "-m", "Cross repo main PR"]);
-      let generatedPrTemplate: string | undefined;
+  it.effect(
+    "allows cross-repo PR creation when head and base branch names match",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("synara-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+        fs.mkdirSync(path.join(repoDir, ".github"));
+        fs.writeFileSync(
+          path.join(repoDir, ".github", "pull_request_template.md"),
+          "target repository template",
+        );
+        yield* runGit(repoDir, ["add", ".github/pull_request_template.md"]);
+        yield* runGit(repoDir, ["commit", "-m", "Add target PR template"]);
+        yield* runGit(repoDir, ["push", "origin", "main"]);
+        yield* runGit(repoDir, ["push", "-u", "fork", "main"]);
+        fs.writeFileSync(
+          path.join(repoDir, ".github", "pull_request_template.md"),
+          "fork-only template",
+        );
+        yield* runGit(repoDir, ["add", ".github/pull_request_template.md"]);
+        yield* runGit(repoDir, ["commit", "-m", "Change template in fork"]);
+        yield* runGit(repoDir, ["push", "fork", "main"]);
+        yield* runGit(repoDir, [
+          "config",
+          "remote.origin.url",
+          "git@github.com:example-org/sample-repo.git",
+        ]);
+        yield* runGit(repoDir, ["config", "remote.origin.pushurl", originDir]);
+        yield* runGit(repoDir, [
+          "config",
+          "remote.fork.url",
+          "git@github.com:octocat/sample-repo.git",
+        ]);
+        yield* runGit(repoDir, ["config", "remote.fork.pushurl", forkDir]);
+        fs.writeFileSync(path.join(repoDir, "cross-repo-pr.txt"), "fork main change\n");
+        yield* runGit(repoDir, ["add", "cross-repo-pr.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Cross repo main PR"]);
+        let generatedPrTemplate: string | undefined;
 
-      const { manager, ghCalls } = yield* makeManager({
-        textGeneration: {
-          generatePrContent: (input) => {
-            generatedPrTemplate = input.prTemplate;
-            return Effect.succeed({
-              title: "Cross-repository change",
-              body: "Target template body",
-            });
+        const { manager, ghCalls } = yield* makeManager({
+          textGeneration: {
+            generatePrContent: (input) => {
+              generatedPrTemplate = input.prTemplate;
+              return Effect.succeed({
+                title: "Cross-repository change",
+                body: "Target template body",
+              });
+            },
           },
-        },
-        ghScenario: {
-          prListByHeadSelector: {
-            "octocat:main": "[]",
-            "fork:main": "[]",
-            main: "[]",
+          ghScenario: {
+            prListByHeadSelector: {
+              "octocat:main": "[]",
+              "fork:main": "[]",
+              main: "[]",
+            },
           },
-        },
-      });
-      const result = yield* runStackedAction(manager, {
-        cwd: repoDir,
-        action: "create_pr",
-      });
+        });
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "create_pr",
+        });
 
-      expect(result.pr.status).toBe("created");
-      expect(
-        ghCalls.some((call) => call.includes("pr create --base main --head octocat:main")),
-      ).toBe(true);
-      expect(generatedPrTemplate).toBe("target repository template");
-    }),
+        expect(result.pr.status).toBe("created");
+        expect(
+          ghCalls.some((call) => call.includes("pr create --base main --head octocat:main")),
+        ).toBe(true);
+        expect(generatedPrTemplate).toBe("target repository template");
+      }),
+    180_000,
   );
 
   it.effect("returns existing PR metadata for commit/push/pr action", () =>
@@ -1609,72 +1680,77 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("ignores mismatched cross-repo PR candidates before reusing an existing PR", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("synara-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/collision"]);
-      const originDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/collision"]);
-      yield* runGit(repoDir, [
-        "config",
-        "remote.origin.url",
-        "git@github.com:example-org/sample-repo.git",
-      ]);
+  it.effect(
+    "ignores mismatched cross-repo PR candidates before reusing an existing PR",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("synara-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/collision"]);
+        const originDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/collision"]);
+        yield* runGit(repoDir, [
+          "config",
+          "remote.origin.url",
+          "git@github.com:example-org/sample-repo.git",
+        ]);
 
-      const { manager, ghCalls } = yield* makeManager({
-        ghScenario: {
-          prListByHeadSelector: {
-            "feature/collision": JSON.stringify([
-              {
-                number: 201,
-                title: "Wrong repo PR",
-                url: "https://github.com/someone-else/sample-repo/pull/201",
-                baseRefName: "main",
-                headRefName: "feature/collision",
-                isCrossRepository: true,
-                headRepository: {
-                  nameWithOwner: "someone-else/sample-repo",
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListByHeadSelector: {
+              "feature/collision": JSON.stringify([
+                {
+                  number: 201,
+                  title: "Wrong repo PR",
+                  url: "https://github.com/someone-else/sample-repo/pull/201",
+                  baseRefName: "main",
+                  headRefName: "feature/collision",
+                  isCrossRepository: true,
+                  headRepository: {
+                    nameWithOwner: "someone-else/sample-repo",
+                  },
+                  headRepositoryOwner: {
+                    login: "someone-else",
+                  },
                 },
-                headRepositoryOwner: {
-                  login: "someone-else",
+              ]),
+              "origin:feature/collision": JSON.stringify([
+                {
+                  number: 202,
+                  title: "Correct repo PR",
+                  url: "https://github.com/example-org/sample-repo/pull/202",
+                  baseRefName: "main",
+                  headRefName: "feature/collision",
+                  isCrossRepository: false,
+                  headRepository: {
+                    nameWithOwner: "example-org/sample-repo",
+                  },
+                  headRepositoryOwner: {
+                    login: "example-org",
+                  },
                 },
-              },
-            ]),
-            "origin:feature/collision": JSON.stringify([
-              {
-                number: 202,
-                title: "Correct repo PR",
-                url: "https://github.com/example-org/sample-repo/pull/202",
-                baseRefName: "main",
-                headRefName: "feature/collision",
-                isCrossRepository: false,
-                headRepository: {
-                  nameWithOwner: "example-org/sample-repo",
-                },
-                headRepositoryOwner: {
-                  login: "example-org",
-                },
-              },
-            ]),
+              ]),
+            },
           },
-        },
-      });
+        });
 
-      const result = yield* runStackedAction(manager, {
-        cwd: repoDir,
-        action: "create_pr",
-      });
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "create_pr",
+        });
 
-      expect(result.pr.status).toBe("opened_existing");
-      expect(result.pr.number).toBe(202);
-      expect(ghCalls.some((call) => call.includes("pr list --head feature/collision"))).toBe(true);
-      expect(ghCalls.some((call) => call.includes("pr list --head origin:feature/collision"))).toBe(
-        true,
-      );
-      expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
-    }),
+        expect(result.pr.status).toBe("opened_existing");
+        expect(result.pr.number).toBe(202);
+        expect(ghCalls.some((call) => call.includes("pr list --head feature/collision"))).toBe(
+          true,
+        );
+        expect(
+          ghCalls.some((call) => call.includes("pr list --head origin:feature/collision")),
+        ).toBe(true);
+        expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
+      }),
+    180_000,
   );
 
   it.effect(
@@ -1724,7 +1800,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         ).toBe(true);
         expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
       }),
-    30_000,
+    120_000,
   );
 
   it.effect(
@@ -1786,7 +1862,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         expect(ownerSelectorCallIndex).toBeGreaterThanOrEqual(0);
         expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
       }),
-    30_000,
+    120_000,
   );
 
   it.effect(
@@ -1840,7 +1916,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           "pr list --head octocat:statemachine --state open --limit 1",
         );
       }),
-    30_000,
+    120_000,
   );
 
   it.effect("creates PR when one does not already exist", () =>

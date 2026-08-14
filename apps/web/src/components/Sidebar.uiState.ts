@@ -16,6 +16,11 @@ export type SidebarUiState = {
   lastThreadRoute: LastThreadRoute | null;
   /** Swaps the Projects surface for the flat task-feed Activity view. */
   activityViewEnabled: boolean;
+  /**
+   * Branch-group folders are expanded by default; only user-collapsed groups
+   * are recorded so unknown parents keep the open-by-default behavior.
+   */
+  collapsedBranchGroupThreadIds: string[];
 };
 
 const DEFAULT_SIDEBAR_UI_STATE: SidebarUiState = {
@@ -25,6 +30,7 @@ const DEFAULT_SIDEBAR_UI_STATE: SidebarUiState = {
   dismissedThreadStatusKeyByThreadId: {},
   lastThreadRoute: null,
   activityViewEnabled: false,
+  collapsedBranchGroupThreadIds: [],
 };
 
 // Persisted paging is a request, not a promise: render-time clamping trims it to the real
@@ -61,6 +67,17 @@ function sanitizeProjectThreadListExtraPagesByCwd(
   return extraPagesByCwd;
 }
 
+function sanitizeThreadIdList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return [
+    ...new Set(
+      value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0),
+    ),
+  ];
+}
+
 export function readSidebarUiState(): SidebarUiState {
   if (typeof window === "undefined") {
     return DEFAULT_SIDEBAR_UI_STATE;
@@ -85,6 +102,7 @@ export function readSidebarUiState(): SidebarUiState {
         splitViewId?: unknown;
       } | null;
       activityViewEnabled?: boolean;
+      collapsedBranchGroupThreadIds?: unknown;
     };
 
     const lastThreadRoute =
@@ -133,6 +151,7 @@ export function readSidebarUiState(): SidebarUiState {
       ),
       lastThreadRoute,
       activityViewEnabled: parsed.activityViewEnabled === true,
+      collapsedBranchGroupThreadIds: sanitizeThreadIdList(parsed.collapsedBranchGroupThreadIds),
     };
   } catch {
     return DEFAULT_SIDEBAR_UI_STATE;
@@ -185,6 +204,7 @@ export function persistSidebarUiState(input: SidebarUiState): void {
             }
           : null,
         activityViewEnabled: input.activityViewEnabled,
+        collapsedBranchGroupThreadIds: sanitizeThreadIdList(input.collapsedBranchGroupThreadIds),
       }),
     );
   } catch {

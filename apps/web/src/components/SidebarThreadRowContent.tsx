@@ -171,6 +171,8 @@ export function SidebarThreadRowContent({
   isActive,
   variant,
   subagentIndentPx: subagentIndentPxProp,
+  nestedIndentPx: nestedIndentPxProp,
+  leadingExtra,
   pendingStatusColorClass,
   suffix,
 }: {
@@ -181,10 +183,15 @@ export function SidebarThreadRowContent({
   isActive: boolean;
   variant: "pinned" | "standard";
   subagentIndentPx?: number;
+  /** Left indent for nested non-subagent rows (branch-group children). */
+  nestedIndentPx?: number;
+  /** Optional affordance rendered before the leading avatar (e.g. folder chevron). */
+  leadingExtra?: ReactNode;
   pendingStatusColorClass?: string | null | undefined;
   suffix?: ReactNode;
 }) {
   const subagentIndentPx = subagentIndentPxProp ?? 0;
+  const nestedIndentPx = nestedIndentPxProp ?? 0;
   const isSubagentThread = Boolean(thread.parentThreadId);
   const subagentPresentation =
     variant === "standard" && isSubagentThread
@@ -200,9 +207,19 @@ export function SidebarThreadRowContent({
         })
       : null;
   const showThreadProviderAvatar = !isGenericChatThreadTitle(thread.title);
+  const leadingNode = terminalEntryPoint ? (
+    <SidebarGlyph icon={TerminalIcon} variant="chrome" />
+  ) : showThreadProviderAvatar ? (
+    <ProviderAvatarWithTerminal
+      thread={thread}
+      terminalStatus={terminalStatus}
+      terminalCount={terminalCount}
+    />
+  ) : null;
 
   return (
     <>
+      {leadingExtra}
       {variant === "standard" && isSubagentThread ? (
         <span
           aria-hidden="true"
@@ -216,15 +233,16 @@ export function SidebarThreadRowContent({
             style={{ backgroundColor: subagentPresentation?.accentColor }}
           />
         </span>
-      ) : terminalEntryPoint ? (
-        <SidebarGlyph icon={TerminalIcon} variant="chrome" />
-      ) : showThreadProviderAvatar ? (
-        <ProviderAvatarWithTerminal
-          thread={thread}
-          terminalStatus={terminalStatus}
-          terminalCount={terminalCount}
-        />
-      ) : null}
+      ) : nestedIndentPx > 0 ? (
+        <span
+          className="relative inline-flex shrink-0 items-center"
+          style={{ marginLeft: `${nestedIndentPx}px` }}
+        >
+          {leadingNode}
+        </span>
+      ) : (
+        leadingNode
+      )}
       <div
         className={cn(
           "flex min-w-0 flex-1 items-center text-left",

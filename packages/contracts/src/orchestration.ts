@@ -249,6 +249,9 @@ export const ThreadCreationSource = Schema.Literals([
   "external_mcp",
   "provider_native",
   "automation_run",
+  // Branch/PR threads created from inside an existing chat; the source thread
+  // groups them in the sidebar like the branches of a repository.
+  "chat_branch",
 ]);
 export type ThreadCreationSource = typeof ThreadCreationSource.Type;
 export const ProviderReviewTarget = Schema.Union([

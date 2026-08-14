@@ -302,6 +302,7 @@ const PersistedDraftThreadState = Schema.Struct({
   goal: Schema.optionalKey(Schema.String),
   isTemporary: Schema.optionalKey(Schema.Boolean),
   promotedTo: Schema.optionalKey(ThreadId),
+  sourceThreadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
 });
 
 type PersistedDraftThreadState = typeof PersistedDraftThreadState.Type;
@@ -736,6 +737,11 @@ function normalizePersistedDraftThreads(
         candidateDraftThread.promotedTo.length > 0
           ? (candidateDraftThread.promotedTo as ThreadId)
           : undefined;
+      const sourceThreadId =
+        typeof candidateDraftThread.sourceThreadId === "string" &&
+        candidateDraftThread.sourceThreadId.length > 0
+          ? (candidateDraftThread.sourceThreadId as ThreadId)
+          : null;
       if (typeof projectId !== "string" || projectId.length === 0) {
         continue;
       }
@@ -760,6 +766,7 @@ function normalizePersistedDraftThreads(
         ...(goal ? { goal } : {}),
         ...(isTemporary ? { isTemporary: true } : {}),
         ...(promotedTo ? { promotedTo } : {}),
+        ...(sourceThreadId ? { sourceThreadId } : {}),
       };
     }
   }

@@ -234,6 +234,17 @@ function matchesBranchHeadContext(
 
   if (headContext.isCrossRepository) {
     if (pr.isCrossRepository === false) {
+      // A PR opened inside the fork itself (head and base both in the fork repository)
+      // reports isCrossRepository=false even though the branch's remote is a fork of the
+      // checkout's origin. Accept it when its head repository matches the branch's own
+      // head repository.
+      if (
+        expectedHeadRepository &&
+        prHeadRepository &&
+        expectedHeadRepository === prHeadRepository
+      ) {
+        return true;
+      }
       return false;
     }
     if ((expectedHeadRepository || expectedHeadOwner) && !prHeadRepository && !prHeadOwner) {
@@ -689,6 +700,31 @@ function inferPullRequestHeadRemoteInfoFromSelector(
   return {};
 }
 
+// Builds the head-selector probes for PR lookups. Cross-repository branches whose PRs
+// live on the fork itself (head and base in the fork repository) are invisible to
+// `gh pr list --head <selector>` run against the checkout's default repository, so add
+// a repository-scoped probe targeting the branch's own head repository.
+function buildPullRequestProbes(
+  headContext: Pick<
+    BranchHeadContext,
+    "headSelectors" | "headBranch" | "headRepositoryNameWithOwner" | "isCrossRepository"
+  >,
+): ReadonlyArray<{ readonly headSelector: string; readonly repository?: string }> {
+  const probes: { readonly headSelector: string; readonly repository?: string }[] =
+    headContext.headSelectors.map((headSelector) => ({ headSelector }));
+  if (
+    headContext.isCrossRepository &&
+    headContext.headRepositoryNameWithOwner &&
+    headContext.headBranch
+  ) {
+    probes.push({
+      headSelector: headContext.headBranch,
+      repository: headContext.headRepositoryNameWithOwner,
+    });
+  }
+  return probes;
+}
+
 export const makeGitManager = Effect.gen(function* () {
   const gitCore = yield* GitCore;
   const gitHubCli = yield* GitHubCli;
@@ -937,14 +973,15 @@ export const makeGitManager = Effect.gen(function* () {
     >,
   ) =>
     Effect.gen(function* () {
-      for (const headSelector of headContext.headSelectors) {
+      for (const probe of buildPullRequestProbes(headContext)) {
         const pullRequests = yield* gitHubCli.listOpenPullRequests({
           cwd,
-          headSelector,
+          headSelector: probe.headSelector,
+          ...(probe.repository ? { repository: probe.repository } : {}),
           limit: OPEN_PR_LOOKUP_LIMIT,
         });
         const inferredHeadInfo = inferPullRequestHeadRemoteInfoFromSelector(
-          headSelector,
+          probe.headSelector,
           headContext,
         );
 
@@ -969,14 +1006,15 @@ export const makeGitManager = Effect.gen(function* () {
       const headContext = yield* resolveBranchHeadContext(cwd, details);
       const parsedByNumber = new Map<number, PullRequestInfo>();
 
-      for (const headSelector of headContext.headSelectors) {
+      for (const probe of buildPullRequestProbes(headContext)) {
         const inferredHeadInfo = inferPullRequestHeadRemoteInfoFromSelector(
-          headSelector,
+          probe.headSelector,
           headContext,
         );
         const pullRequests = yield* gitHubCli.listPullRequests({
           cwd,
-          headSelector,
+          headSelector: probe.headSelector,
+          ...(probe.repository ? { repository: probe.repository } : {}),
           limit: PR_LOOKUP_ALL_STATES_LIMIT,
         });
 

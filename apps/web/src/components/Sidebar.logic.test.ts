@@ -45,6 +45,7 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveThreadHoverCardMetadata,
   resolveThreadRowClassName,
+  resolveThreadRowTrailingReserveClass,
   resolveThreadStatusPill,
   resolveThreadStatusTrailingIndicator,
   isUrgentThreadStatusPill,
@@ -1337,6 +1338,36 @@ describe("resolveThreadRowClassName", () => {
   });
 });
 
+describe("resolveThreadRowTrailingReserveClass", () => {
+  it("keeps the collapsed folder count chip out of the title slot", () => {
+    const className = resolveThreadRowTrailingReserveClass({
+      metaChipCount: 0,
+      hasTrailingGlyph: false,
+      branchCountChip: true,
+    });
+    expect(className).toContain("pr-[3.75rem]");
+    expect(className).toContain("group-hover/thread-row:pr-[4.75rem]");
+  });
+
+  it("grows the folder reserve further when the folder status glyph is present", () => {
+    const className = resolveThreadRowTrailingReserveClass({
+      metaChipCount: 0,
+      hasTrailingGlyph: true,
+      branchCountChip: true,
+    });
+    expect(className).toContain("pr-[5rem]");
+  });
+
+  it("leaves non-folder rows on the chipless reserves", () => {
+    const className = resolveThreadRowTrailingReserveClass({
+      metaChipCount: 0,
+      hasTrailingGlyph: false,
+    });
+    expect(className).toContain("pr-2");
+    expect(className).not.toContain("pr-[3.75rem]");
+  });
+});
+
 describe("resolveProjectStatusIndicator", () => {
   it("returns null when no threads have a notable status", () => {
     expect(resolveProjectStatusIndicator([null, null])).toBeNull();
@@ -1537,6 +1568,215 @@ describe("buildProjectThreadTree", () => {
       [ThreadId.makeUnsafe("thread-parent"), 0],
       [ThreadId.makeUnsafe("thread-child"), 1],
       [ThreadId.makeUnsafe("thread-grandchild"), 2],
+    ]);
+  });
+});
+
+describe("buildProjectThreadTree branch groups", () => {
+  const collapsedNone: ReadonlySet<ThreadId> = new Set();
+  const collapsed = (...threadIds: string[]) =>
+    new Set(threadIds.map((threadId) => ThreadId.makeUnsafe(threadId)));
+
+  const makeBranchThread = (input: { id: string; source?: string; createdAt?: string }) =>
+    makeSidebarThreadSummary({
+      id: ThreadId.makeUnsafe(input.id),
+      sourceThreadId: input.source ? ThreadId.makeUnsafe(input.source) : null,
+      ...(input.createdAt ? { createdAt: input.createdAt } : {}),
+    });
+
+  it("keeps branch threads flat when grouping is not requested", () => {
+    const rows = buildProjectThreadTree({
+      threads: [
+        makeBranchThread({ id: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-a", source: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-b", source: "thread-main" }),
+      ],
+    });
+
+    expect(rows.map((row) => [row.thread.id, row.depth])).toEqual([
+      [ThreadId.makeUnsafe("thread-main"), 0],
+      [ThreadId.makeUnsafe("thread-pr-a"), 0],
+      [ThreadId.makeUnsafe("thread-pr-b"), 0],
+    ]);
+  });
+
+  it("groups branch siblings under their source chat once the threshold is reached", () => {
+    const rows = buildProjectThreadTree({
+      threads: [
+        makeBranchThread({ id: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-a", source: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-b", source: "thread-main" }),
+      ],
+      collapsedBranchGroupThreadIds: collapsedNone,
+    });
+
+    expect(rows.map((row) => [row.thread.id, row.depth])).toEqual([
+      [ThreadId.makeUnsafe("thread-main"), 0],
+      [ThreadId.makeUnsafe("thread-pr-a"), 1],
+      [ThreadId.makeUnsafe("thread-pr-b"), 1],
+    ]);
+    expect(rows[0]?.branchChildCount).toBe(2);
+  });
+
+  it("leaves a single branch thread flat below the sibling threshold", () => {
+    const rows = buildProjectThreadTree({
+      threads: [
+        makeBranchThread({ id: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-a", source: "thread-main" }),
+      ],
+      collapsedBranchGroupThreadIds: collapsedNone,
+    });
+
+    expect(rows.map((row) => [row.thread.id, row.depth])).toEqual([
+      [ThreadId.makeUnsafe("thread-main"), 0],
+      [ThreadId.makeUnsafe("thread-pr-a"), 0],
+    ]);
+    expect(rows[0]?.branchChildCount).toBeUndefined();
+  });
+
+  it("honors a custom sibling threshold", () => {
+    const rows = buildProjectThreadTree({
+      threads: [
+        makeBranchThread({ id: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-a", source: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-b", source: "thread-main" }),
+      ],
+      collapsedBranchGroupThreadIds: collapsedNone,
+      branchGroupMinChildCount: 3,
+    });
+
+    expect(rows.map((row) => [row.thread.id, row.depth])).toEqual([
+      [ThreadId.makeUnsafe("thread-main"), 0],
+      [ThreadId.makeUnsafe("thread-pr-a"), 0],
+      [ThreadId.makeUnsafe("thread-pr-b"), 0],
+    ]);
+  });
+
+  it("hides the children of a collapsed group but keeps the folder count", () => {
+    const rows = buildProjectThreadTree({
+      threads: [
+        makeBranchThread({ id: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-a", source: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-b", source: "thread-main" }),
+      ],
+      collapsedBranchGroupThreadIds: collapsed("thread-main"),
+    });
+
+    expect(rows.map((row) => [row.thread.id, row.depth])).toEqual([
+      [ThreadId.makeUnsafe("thread-main"), 0],
+    ]);
+    expect(rows[0]?.branchChildCount).toBe(2);
+  });
+
+  it("surfaces only the active child inside a collapsed group", () => {
+    const rows = buildProjectThreadTree({
+      threads: [
+        makeBranchThread({ id: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-a", source: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-b", source: "thread-main" }),
+      ],
+      collapsedBranchGroupThreadIds: collapsed("thread-main"),
+      forceVisibleThreadId: ThreadId.makeUnsafe("thread-pr-b"),
+    });
+
+    expect(rows.map((row) => [row.thread.id, row.depth])).toEqual([
+      [ThreadId.makeUnsafe("thread-main"), 0],
+      [ThreadId.makeUnsafe("thread-pr-b"), 1],
+    ]);
+    expect(rows[0]?.branchChildCount).toBe(2);
+  });
+
+  it("reveals every child of an expanded group", () => {
+    const rows = buildProjectThreadTree({
+      threads: [
+        makeBranchThread({ id: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-a", source: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-b", source: "thread-main" }),
+      ],
+      collapsedBranchGroupThreadIds: collapsedNone,
+      forceVisibleThreadId: ThreadId.makeUnsafe("thread-pr-b"),
+    });
+
+    expect(rows.map((row) => [row.thread.id, row.depth])).toEqual([
+      [ThreadId.makeUnsafe("thread-main"), 0],
+      [ThreadId.makeUnsafe("thread-pr-a"), 1],
+      [ThreadId.makeUnsafe("thread-pr-b"), 1],
+    ]);
+  });
+
+  it("resolves chained sources to the ultimate root chat", () => {
+    const rows = buildProjectThreadTree({
+      threads: [
+        makeBranchThread({ id: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-a", source: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-a-fix", source: "thread-pr-a" }),
+        makeBranchThread({ id: "thread-pr-b", source: "thread-main" }),
+      ],
+      collapsedBranchGroupThreadIds: collapsedNone,
+    });
+
+    expect(rows.map((row) => [row.thread.id, row.depth])).toEqual([
+      [ThreadId.makeUnsafe("thread-main"), 0],
+      [ThreadId.makeUnsafe("thread-pr-a"), 1],
+      [ThreadId.makeUnsafe("thread-pr-a-fix"), 1],
+      [ThreadId.makeUnsafe("thread-pr-b"), 1],
+    ]);
+    expect(rows[0]?.branchChildCount).toBe(3);
+  });
+
+  it("renders children flat when their source chat is not in the list", () => {
+    const rows = buildProjectThreadTree({
+      threads: [
+        makeBranchThread({ id: "thread-pr-a", source: "thread-archived-main" }),
+        makeBranchThread({ id: "thread-pr-b", source: "thread-archived-main" }),
+      ],
+      collapsedBranchGroupThreadIds: collapsedNone,
+    });
+
+    expect(rows.map((row) => [row.thread.id, row.depth])).toEqual([
+      [ThreadId.makeUnsafe("thread-pr-a"), 0],
+      [ThreadId.makeUnsafe("thread-pr-b"), 0],
+    ]);
+  });
+
+  it("treats a self-referencing source link as no group", () => {
+    const rows = buildProjectThreadTree({
+      threads: [
+        makeBranchThread({ id: "thread-main", source: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-a", source: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-b", source: "thread-main" }),
+      ],
+      collapsedBranchGroupThreadIds: collapsedNone,
+    });
+
+    expect(rows.map((row) => [row.thread.id, row.depth])).toEqual([
+      [ThreadId.makeUnsafe("thread-main"), 0],
+      [ThreadId.makeUnsafe("thread-pr-a"), 0],
+      [ThreadId.makeUnsafe("thread-pr-b"), 0],
+    ]);
+  });
+
+  it("keeps subagent nesting precedence over branch grouping", () => {
+    const rows = buildProjectThreadTree({
+      threads: [
+        makeBranchThread({ id: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-a", source: "thread-main" }),
+        makeBranchThread({ id: "thread-pr-b", source: "thread-main" }),
+        makeSidebarThreadSummary({
+          id: ThreadId.makeUnsafe("thread-subagent"),
+          parentThreadId: ThreadId.makeUnsafe("thread-main"),
+          sourceThreadId: ThreadId.makeUnsafe("thread-main"),
+        }),
+      ],
+      collapsedBranchGroupThreadIds: collapsedNone,
+      forceVisibleThreadId: ThreadId.makeUnsafe("thread-subagent"),
+    });
+
+    expect(rows.map((row) => [row.thread.id, row.depth])).toEqual([
+      [ThreadId.makeUnsafe("thread-main"), 0],
+      [ThreadId.makeUnsafe("thread-subagent"), 1],
+      [ThreadId.makeUnsafe("thread-pr-a"), 1],
+      [ThreadId.makeUnsafe("thread-pr-b"), 1],
     ]);
   });
 });

@@ -202,6 +202,8 @@ export interface DraftThreadState {
   goal?: string;
   isTemporary?: boolean;
   promotedTo?: ThreadId;
+  /** Chat the draft was spawned from (e.g. a PR/branch checkout); drives sidebar grouping. */
+  sourceThreadId?: ThreadId | null;
 }
 
 interface DraftThreadMutationOptions {
@@ -210,6 +212,7 @@ interface DraftThreadMutationOptions {
   workingDirectory?: string | null;
   lastKnownPr?: OrchestrationThreadPullRequest | null;
   createdAt?: string;
+  sourceThreadId?: ThreadId | null;
   // Explicitly `| undefined`: callers forward a `ThreadWorkspacePatch`, whose `envMode` is
   // optional in the same way, and under `exactOptionalPropertyTypes` a bare `?:` would reject
   // that spread even though the value sets are identical ("local" | "worktree").
@@ -440,6 +443,10 @@ export function buildDraftThreadState(input: {
   const nextPromotedTo = existingThread?.promotedTo;
   const nextGoal =
     options?.goal === undefined ? existingThread?.goal : options.goal.trim() || undefined;
+  const nextSourceThreadId =
+    options?.sourceThreadId === undefined
+      ? (existingThread?.sourceThreadId ?? null)
+      : (options.sourceThreadId ?? null);
 
   return {
     projectId: input.projectId,
@@ -468,6 +475,7 @@ export function buildDraftThreadState(input: {
     ...(nextGoal ? { goal: nextGoal } : {}),
     ...(nextIsTemporary ? { isTemporary: true } : {}),
     ...(nextPromotedTo ? { promotedTo: nextPromotedTo } : {}),
+    ...(nextSourceThreadId ? { sourceThreadId: nextSourceThreadId } : {}),
   };
 }
 
@@ -489,6 +497,7 @@ export function draftThreadStatesEqual(
     left.worktreePath === right.worktreePath &&
     (left.workingDirectory ?? null) === (right.workingDirectory ?? null) &&
     Equal.equals(left.lastKnownPr ?? null, right.lastKnownPr ?? null) &&
+    (left.sourceThreadId ?? null) === (right.sourceThreadId ?? null) &&
     left.envMode === right.envMode &&
     (left.goal ?? "") === (right.goal ?? "") &&
     (left.isTemporary === true) === (right.isTemporary === true) &&

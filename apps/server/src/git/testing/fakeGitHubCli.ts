@@ -20,6 +20,7 @@ import {
   decodePullRequestListJson,
   decodeRepositoryPullRequestListJson,
   PULL_REQUEST_LIST_JSON_FIELDS,
+  repositorySelector,
 } from "../Layers/GitHubCli.ts";
 import {
   type GitHubCliShape,
@@ -32,6 +33,7 @@ import {
 export interface FakeGhScenario {
   prListSequence?: string[];
   prListByHeadSelector?: Record<string, string>;
+  prListByRepositoryHead?: Record<string, string>;
   createdPrUrl?: string;
   defaultBranch?: string;
   pullRequest?: {
@@ -109,10 +111,20 @@ export function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
         headSelectorIndex >= 0 && headSelectorIndex < args.length - 1
           ? args[headSelectorIndex + 1]
           : undefined;
-      const mappedStdout =
-        typeof headSelector === "string"
-          ? scenario.prListByHeadSelector?.[headSelector]
+      const repositoryIndex = args.findIndex((value) => value === "--repo");
+      const repository =
+        repositoryIndex >= 0 && repositoryIndex < args.length - 1
+          ? args[repositoryIndex + 1]
           : undefined;
+      const repositoryHeadKey =
+        typeof headSelector === "string" && typeof repository === "string"
+          ? `${repository}::${headSelector}`
+          : undefined;
+      const mappedStdout =
+        (repositoryHeadKey ? scenario.prListByRepositoryHead?.[repositoryHeadKey] : undefined) ??
+        (typeof headSelector === "string"
+          ? scenario.prListByHeadSelector?.[headSelector]
+          : undefined);
       const stdout = (mappedStdout ?? prListQueue.shift() ?? "[]") + "\n";
       return Effect.succeed({
         stdout,
@@ -255,7 +267,7 @@ export function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   };
 
   const listPullRequestsWithState = (
-    input: { cwd: string; headSelector: string; limit?: number },
+    input: { cwd: string; headSelector: string; repository?: string; limit?: number },
     options: { state: "open" | "all"; defaultLimit: number },
   ) =>
     execute({
@@ -263,6 +275,7 @@ export function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
       args: [
         "pr",
         "list",
+        ...(input.repository ? ["--repo", repositorySelector(input.repository)] : []),
         "--head",
         input.headSelector,
         "--state",

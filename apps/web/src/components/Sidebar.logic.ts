@@ -298,6 +298,10 @@ export type SidebarProjectEntry = {
   rootRowId: ThreadId;
   thread: SidebarThreadSummary;
   depth: number;
+  /** Number of branch threads nested under this row; drives the folder chevron. */
+  branchChildCount?: number;
+  /** Highest-priority status across the folder's children; shown while collapsed. */
+  branchGroupStatus?: ThreadStatusPill | null;
 };
 
 export type SidebarThreadHoverAnchorScope = "pinned" | "chat" | "project" | "activity";
@@ -544,12 +548,32 @@ export function pruneProjectThreadListPagingForCollapsedProjects<
 export function resolveThreadRowTrailingReserveClass(input: {
   metaChipCount: number;
   hasTrailingGlyph: boolean;
+  /**
+   * Collapsed branch folder: the absolute trailing slot also carries the "N
+   * branches" count chip (and the folder's status glyph), so the title has to
+   * give up that width at rest or it scrolls underneath the chip.
+   */
+  branchCountChip?: boolean;
 }): string {
   // Hover/focus reveals the pin/archive actions; the meta chips + glyph fade out
   // at the same time, so the hover reserve is constant regardless of rest content.
   const hoverReserve =
     "transition-[padding] duration-150 ease-out group-hover/thread-row:pr-[4.75rem] group-focus-within/thread-row:pr-[4.75rem]";
-  const { metaChipCount, hasTrailingGlyph } = input;
+  const { metaChipCount, hasTrailingGlyph, branchCountChip } = input;
+  if (branchCountChip) {
+    // Count chip ≈ "12 branches" at 10px ≈ 3.25rem incl. its margin; the
+    // hasTrailingGlyph case adds the folder status glyph on top.
+    if (metaChipCount <= 0) {
+      return cn(hasTrailingGlyph ? "pr-[5rem]" : "pr-[3.75rem]", hoverReserve);
+    }
+    if (metaChipCount === 1) {
+      return cn(hasTrailingGlyph ? "pr-[6.25rem]" : "pr-[5rem]", hoverReserve);
+    }
+    if (metaChipCount === 2) {
+      return cn(hasTrailingGlyph ? "pr-[7.25rem]" : "pr-[6.25rem]", hoverReserve);
+    }
+    return cn(hasTrailingGlyph ? "pr-[7.75rem]" : "pr-[7.5rem]", hoverReserve);
+  }
   if (metaChipCount <= 0) {
     return cn(hasTrailingGlyph ? "pr-[1.75rem]" : "pr-2", hoverReserve);
   }
@@ -908,80 +932,234 @@ export function getVisibleThreadsForProject<T extends Pick<SidebarThreadSummary,
 }
 
 export interface SidebarThreadTreeRow<
-  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId" | "sourceThreadId">,
 > {
   thread: T;
   depth: number;
   rootThreadId: T["id"];
+  /**
+   * Set on rows that head a branch group: the number of branch threads nested
+   * beneath them. Present even when the group is collapsed so the folder
+   * affordance (chevron + count) stays visible.
+   */
+  branchChildCount?: number;
 }
 
+// Below this many branch siblings no folder is created: with a single branch
+// thread, nesting it under the main chat would add a click for no ordering win.
+export const BRANCH_GROUP_MIN_CHILD_COUNT = 2;
+
+type ThreadTreeEdgeKind = "subagent" | "branch";
+
 function collectActiveThreadAncestorIds<
-  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId" | "sourceThreadId">,
 >(threadById: Map<T["id"], T>, forceVisibleThreadId: T["id"] | undefined): Set<T["id"]> {
   const ancestorIds = new Set<T["id"]>();
-  let currentThreadId = forceVisibleThreadId;
+  const pendingIds: T["id"][] = forceVisibleThreadId ? [forceVisibleThreadId] : [];
 
-  while (currentThreadId) {
-    const parentThreadId = threadById.get(currentThreadId)?.parentThreadId ?? undefined;
-    if (!parentThreadId) {
-      break;
+  while (pendingIds.length > 0) {
+    const currentThreadId = pendingIds.pop();
+    if (currentThreadId === undefined) {
+      continue;
     }
-    ancestorIds.add(parentThreadId);
-    currentThreadId = parentThreadId;
+    const thread = threadById.get(currentThreadId);
+    if (!thread) {
+      continue;
+    }
+    const parentThreadId = thread.parentThreadId ?? null;
+    if (parentThreadId && parentThreadId !== currentThreadId && !ancestorIds.has(parentThreadId)) {
+      ancestorIds.add(parentThreadId);
+      pendingIds.push(parentThreadId);
+    }
+    const sourceThreadId = thread.sourceThreadId ?? null;
+    if (sourceThreadId && sourceThreadId !== currentThreadId && !ancestorIds.has(sourceThreadId)) {
+      ancestorIds.add(sourceThreadId);
+      pendingIds.push(sourceThreadId);
+    }
   }
 
   return ancestorIds;
 }
 
+// Resolve the ultimate branch-group root of a thread by walking its
+// sourceThreadId chain inside the same list. Returns null when the chain leads
+// out of the list (archived/missing source) or contains a cycle.
+function resolveBranchGroupRootThreadId<
+  T extends Pick<SidebarThreadSummary, "id" | "sourceThreadId">,
+>(threadById: Map<T["id"], T>, threadId: T["id"]): T["id"] | null {
+  const visitedIds = new Set<T["id"]>([threadId]);
+  let currentThreadId: T["id"] | null = threadById.get(threadId)?.sourceThreadId ?? null;
+  let rootThreadId: T["id"] | null = null;
+
+  while (currentThreadId) {
+    if (visitedIds.has(currentThreadId)) {
+      return null;
+    }
+    visitedIds.add(currentThreadId);
+    rootThreadId = currentThreadId;
+    currentThreadId = threadById.get(currentThreadId)?.sourceThreadId ?? null;
+  }
+
+  return rootThreadId;
+}
+
+// Branch-thread children of every folder above the sibling threshold, keyed by
+// the source chat that heads the folder. Shared by the tree builder's callers
+// for folder status aggregation, hover cards, and folder context-menu actions.
+const EMPTY_BRANCH_GROUP_CHILDREN: ReadonlyMap<ThreadId, readonly SidebarThreadSummary[]> =
+  new Map();
+
+export function buildActiveBranchGroupChildrenMap<
+  T extends Pick<SidebarThreadSummary, "id" | "sourceThreadId">,
+>(
+  threads: readonly T[],
+  minChildCount: number = BRANCH_GROUP_MIN_CHILD_COUNT,
+): ReadonlyMap<T["id"], readonly T[]> {
+  const threadById = new Map(threads.map((thread) => [thread.id, thread] as const));
+  const childrenByRootId = new Map<T["id"], T[]>();
+
+  for (const thread of threads) {
+    const rootThreadId = resolveBranchGroupRootThreadId(threadById, thread.id);
+    if (rootThreadId === null || !threadById.has(rootThreadId)) {
+      continue;
+    }
+    const siblings = childrenByRootId.get(rootThreadId) ?? [];
+    siblings.push(thread);
+    childrenByRootId.set(rootThreadId, siblings);
+  }
+
+  const activeGroups = new Map<T["id"], readonly T[]>();
+  for (const [rootThreadId, children] of childrenByRootId) {
+    if (children.length >= minChildCount) {
+      activeGroups.set(rootThreadId, children);
+    }
+  }
+  return activeGroups;
+}
+
 // Build the project-local parent/child thread tree while preserving sort order from the input list.
+// - Subagent edges (`parentThreadId`): children surface only while the parent is
+//   the active thread or an ancestor of it.
+// - Branch-group edges (`sourceThreadId`, opt-in via `collapsedBranchGroupThreadIds`):
+//   branch/PR threads cluster beneath their source chat as an expandable folder,
+//   but only once the group holds at least `branchGroupMinChildCount` siblings.
+//   Groups honor the persisted collapse state and always expand to reveal the
+//   active descendant. Without the collapsed-set input, branch grouping is off
+//   and those threads render as ordinary roots.
 export function buildProjectThreadTree<
-  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId" | "sourceThreadId">,
 >(input: {
   threads: readonly T[];
   forceVisibleThreadId?: T["id"] | undefined;
+  collapsedBranchGroupThreadIds?: ReadonlySet<T["id"]> | undefined;
+  branchGroupMinChildCount?: number | undefined;
 }): SidebarThreadTreeRow<T>[] {
-  const { forceVisibleThreadId, threads } = input;
+  const { collapsedBranchGroupThreadIds, forceVisibleThreadId, threads } = input;
+  const branchGroupMinChildCount = input.branchGroupMinChildCount ?? BRANCH_GROUP_MIN_CHILD_COUNT;
+  const groupingEnabled = collapsedBranchGroupThreadIds !== undefined;
   const threadById = new Map(threads.map((thread) => [thread.id, thread] as const));
-  const childrenByParentId = new Map<T["id"], T[]>();
+
+  // Pass 1: resolve every thread's branch-group root and count its siblings.
+  const branchGroupRootByThreadId = new Map<T["id"], T["id"] | null>();
+  const branchChildCountByRootId = new Map<T["id"], number>();
+  for (const thread of threads) {
+    const branchGroupRootId = groupingEnabled
+      ? resolveBranchGroupRootThreadId(threadById, thread.id)
+      : null;
+    branchGroupRootByThreadId.set(thread.id, branchGroupRootId);
+    if (branchGroupRootId !== null && threadById.has(branchGroupRootId)) {
+      branchChildCountByRootId.set(
+        branchGroupRootId,
+        (branchChildCountByRootId.get(branchGroupRootId) ?? 0) + 1,
+      );
+    }
+  }
+
+  // Folders only exist above the sibling threshold: smaller groups dissolve and
+  // their children render as flat roots instead.
+  const activeBranchRootIds = new Set<T["id"]>();
+  for (const [rootThreadId, childCount] of branchChildCountByRootId) {
+    if (childCount >= branchGroupMinChildCount) {
+      activeBranchRootIds.add(rootThreadId);
+    }
+  }
+
+  // Pass 2: attach edges or promote to root, preserving the input order.
+  const childrenByParentId = new Map<T["id"], Array<{ thread: T; kind: ThreadTreeEdgeKind }>>();
   const roots: T[] = [];
 
   for (const thread of threads) {
     const parentThreadId = thread.parentThreadId ?? null;
-    if (!parentThreadId) {
-      roots.push(thread);
+    if (parentThreadId) {
+      // Subagent threads are only reachable through their parent. When the parent
+      // is not in the list (archived or deleted), its subtree stays hidden instead
+      // of being promoted to top-level rows.
+      if (!threadById.has(parentThreadId)) {
+        continue;
+      }
+      const siblings = childrenByParentId.get(parentThreadId) ?? [];
+      siblings.push({ thread, kind: "subagent" });
+      childrenByParentId.set(parentThreadId, siblings);
       continue;
     }
-    // Subagent threads are only reachable through their parent. When the parent
-    // is not in the list (archived or deleted), its subtree stays hidden instead
-    // of being promoted to top-level rows.
-    if (!threadById.has(parentThreadId)) {
+
+    const branchGroupRootId = branchGroupRootByThreadId.get(thread.id) ?? null;
+    if (
+      branchGroupRootId !== null &&
+      branchGroupRootId !== thread.id &&
+      activeBranchRootIds.has(branchGroupRootId)
+    ) {
+      const siblings = childrenByParentId.get(branchGroupRootId) ?? [];
+      siblings.push({ thread, kind: "branch" });
+      childrenByParentId.set(branchGroupRootId, siblings);
       continue;
     }
-    const siblings = childrenByParentId.get(parentThreadId) ?? [];
-    siblings.push(thread);
-    childrenByParentId.set(parentThreadId, siblings);
+
+    roots.push(thread);
   }
 
   const activeThreadAncestorIds = collectActiveThreadAncestorIds(threadById, forceVisibleThreadId);
   const orderedRows: SidebarThreadTreeRow<T>[] = [];
 
   const visit = (thread: T, depth: number, rootThreadId: T["id"]) => {
-    const childThreads = childrenByParentId.get(thread.id) ?? [];
-    const revealsActiveDescendant =
-      childThreads.length > 0 && activeThreadAncestorIds.has(thread.id);
+    const childEdges = childrenByParentId.get(thread.id) ?? [];
+    const subagentChildren = childEdges.filter((edge) => edge.kind === "subagent");
+    const branchChildren = childEdges.filter((edge) => edge.kind === "branch");
+    const revealsActiveDescendant = activeThreadAncestorIds.has(thread.id);
+    const branchGroupExpanded =
+      groupingEnabled && branchChildren.length > 0 && !collapsedBranchGroupThreadIds.has(thread.id);
 
     orderedRows.push({
       thread,
       depth,
       rootThreadId,
+      ...(branchChildren.length > 0 ? { branchChildCount: branchChildren.length } : {}),
     });
 
-    if (!revealsActiveDescendant) {
-      return;
+    if (subagentChildren.length > 0 && revealsActiveDescendant) {
+      for (const child of subagentChildren) {
+        visit(child.thread, depth + 1, rootThreadId);
+      }
     }
 
-    for (const child of childThreads) {
-      visit(child, depth + 1, rootThreadId);
+    if (branchChildren.length > 0) {
+      if (branchGroupExpanded) {
+        for (const child of branchChildren) {
+          visit(child.thread, depth + 1, rootThreadId);
+        }
+      } else if (revealsActiveDescendant) {
+        // A collapsed folder still surfaces the active child (same pattern as
+        // collapsed project folders) so the open chat stays visible while the
+        // chevron keeps reading "closed".
+        for (const child of branchChildren) {
+          const childIsOnActivePath =
+            child.thread.id === forceVisibleThreadId ||
+            activeThreadAncestorIds.has(child.thread.id);
+          if (childIsOnActivePath) {
+            visit(child.thread, depth + 1, rootThreadId);
+          }
+        }
+      }
     }
   };
 
@@ -1200,13 +1378,17 @@ export function getRenderedThreadsForSidebarProject<
 // Flatten the sidebar's current project/thread visibility into the same order the user sees.
 export function getVisibleSidebarThreadIds(input: {
   projects: readonly Pick<Project, "id" | "expanded">[];
-  threads: readonly (Pick<SidebarThreadSummary, "id" | "projectId" | "parentThreadId"> &
+  threads: readonly (Pick<
+    SidebarThreadSummary,
+    "id" | "projectId" | "parentThreadId" | "sourceThreadId"
+  > &
     SidebarThreadSortInput)[];
   activeThreadId: Thread["id"] | undefined;
   threadListExtraPagesByProjectId: ReadonlyMap<Project["id"], number>;
   previewLimit: number;
   previewPageSize: number;
   threadSortOrder: SidebarThreadSortOrder;
+  collapsedBranchGroupThreadIds?: ReadonlySet<ThreadId> | undefined;
 }): Thread["id"][] {
   const {
     activeThreadId,
@@ -1237,6 +1419,7 @@ export function getVisibleSidebarThreadIds(input: {
     const projectThreadTree = buildProjectThreadTree({
       threads: projectThreads,
       forceVisibleThreadId: activeThreadId,
+      collapsedBranchGroupThreadIds: input.collapsedBranchGroupThreadIds,
     });
     const paging = resolveSidebarThreadListPaging({
       totalCount: projectThreadTree.length,
@@ -1576,6 +1759,7 @@ export function deriveSidebarProjectData(input: {
   activeSidebarThreadId: ThreadId | undefined;
   previewLimit: number;
   previewPageSize: number;
+  collapsedBranchGroupThreadIds?: ReadonlySet<ThreadId> | undefined;
   resolveThreadStatus?: (
     thread: SidebarThreadSummary,
   ) => ReturnType<typeof resolveThreadStatusPill>;
@@ -1638,15 +1822,40 @@ export function deriveSidebarProjectData(input: {
     const projectThreadTree = buildProjectThreadTree({
       threads: projectThreads,
       forceVisibleThreadId: input.activeSidebarThreadId,
+      collapsedBranchGroupThreadIds: input.collapsedBranchGroupThreadIds,
     });
+    // Folder rows carry the highest-priority status of their children so a
+    // collapsed folder still signals working/approval activity at a glance.
+    const branchGroupChildrenByRootId =
+      input.collapsedBranchGroupThreadIds === undefined
+        ? EMPTY_BRANCH_GROUP_CHILDREN
+        : buildActiveBranchGroupChildrenMap(projectThreads);
+    const resolveStatusForThread = (thread: SidebarThreadSummary) =>
+      input.resolveThreadStatus
+        ? input.resolveThreadStatus(thread)
+        : resolveThreadStatusPill({
+            thread,
+            hasPendingApprovals: thread.hasPendingApprovals,
+            hasPendingUserInput: thread.hasPendingUserInput,
+          });
     const orderedEntries: SidebarProjectEntry[] = projectThreadTree.map(
-      ({ thread, depth, rootThreadId }) => ({
-        kind: "thread",
-        rowId: thread.id,
-        rootRowId: rootThreadId,
-        thread,
-        depth,
-      }),
+      ({ thread, depth, rootThreadId, branchChildCount }) => {
+        const branchGroupStatus =
+          branchChildCount === undefined
+            ? undefined
+            : resolveProjectStatusIndicator(
+                (branchGroupChildrenByRootId.get(thread.id) ?? []).map(resolveStatusForThread),
+              );
+        return {
+          kind: "thread",
+          rowId: thread.id,
+          rootRowId: rootThreadId,
+          thread,
+          depth,
+          ...(branchChildCount !== undefined ? { branchChildCount } : {}),
+          ...(branchGroupStatus !== undefined ? { branchGroupStatus } : {}),
+        };
+      },
     );
 
     const activeEntry =

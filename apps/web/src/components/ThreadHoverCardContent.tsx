@@ -10,7 +10,8 @@
 
 import type { ReactNode } from "react";
 
-import { FastModeIcon, GitBranchIcon, WorktreeIcon } from "~/lib/icons";
+import { FastModeIcon, GitBranchIcon, type LucideIcon, WorktreeIcon } from "~/lib/icons";
+import { cn } from "~/lib/utils";
 import type { ThreadModelSummary } from "~/lib/threadModelSummary";
 import { FolderClosed } from "./FolderClosed";
 import { ProjectSidebarIcon } from "./ProjectSidebarIcon";
@@ -21,6 +22,18 @@ import {
   SIDEBAR_HOVER_CARD_CONTAINER_PADDING_CLASS_NAME,
   SIDEBAR_HOVER_CARD_ROW_CLASS_NAME,
 } from "./sidebarHoverCardStyles";
+
+export type ThreadHoverCardBranchChild = {
+  title: string;
+  /** Pre-formatted relative time (e.g. "2h"); omitted when unavailable. */
+  timeLabel: string | null;
+  prColorClass: string | null;
+  /** GitHub-style PR state glyph (open/merged/closed/draft/conflicts). */
+  prIcon: LucideIcon | null;
+  /** Live thread status, used to color the branch glyph only when something
+   *  is actually happening on the branch (same semantics as thread rows). */
+  status: ThreadStatusPill | null;
+};
 
 export type ThreadHoverCardContentProps = {
   title: string;
@@ -38,6 +51,8 @@ export type ThreadHoverCardContentProps = {
   model: ThreadModelSummary | null;
   /** Current live/actionable state, shown as text so compact row glyphs stay discoverable. */
   status: ThreadStatusPill | null;
+  /** Branch threads nested under this folder row; rendered as a compact list. */
+  branchChildren?: readonly ThreadHoverCardBranchChild[] | undefined;
 };
 
 const META_ROW_CLASS_NAME = `${SIDEBAR_HOVER_CARD_ROW_CLASS_NAME} text-foreground/80`;
@@ -79,6 +94,7 @@ export function ThreadHoverCardContent({
   worktreeName,
   model,
   status,
+  branchChildren,
 }: ThreadHoverCardContentProps) {
   const hasMeta =
     Boolean(projectName) ||
@@ -87,6 +103,7 @@ export function ThreadHoverCardContent({
     Boolean(worktreeName) ||
     Boolean(model) ||
     Boolean(status);
+  const branchChildCount = branchChildren?.length ?? 0;
 
   return (
     <div
@@ -153,6 +170,41 @@ export function ThreadHoverCardContent({
             </MetaRow>
           ) : null}
           {model ? <ModelRow model={model} /> : null}
+        </div>
+      ) : null}
+      {branchChildCount > 0 ? (
+        <div className="flex flex-col gap-0 border-t border-border/60 pt-1.5">
+          <span className="px-1 text-[10px] font-medium text-muted-foreground/70">
+            {branchChildCount} {branchChildCount === 1 ? "branch" : "branches"}
+          </span>
+          {branchChildren?.map((child) => {
+            const PrIcon = child.prIcon;
+            return (
+              <span key={child.title} className={cn(META_ROW_CLASS_NAME, "text-foreground/70")}>
+                <span
+                  aria-hidden="true"
+                  className="inline-flex size-3.5 shrink-0 items-center justify-center"
+                >
+                  {PrIcon ? (
+                    <PrIcon className={cn("size-3.5", child.prColorClass)} />
+                  ) : (
+                    <GitBranchIcon
+                      className={cn(
+                        "size-3.5",
+                        child.status?.colorClass ?? "text-muted-foreground/70",
+                      )}
+                    />
+                  )}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{child.title}</span>
+                {child.timeLabel ? (
+                  <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/55">
+                    {child.timeLabel}
+                  </span>
+                ) : null}
+              </span>
+            );
+          })}
         </div>
       ) : null}
     </div>

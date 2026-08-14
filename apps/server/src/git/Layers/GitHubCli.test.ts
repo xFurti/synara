@@ -132,6 +132,57 @@ layer("GitHubCliLive", (it) => {
     }),
   );
 
+  it.effect("listPullRequests passes a repository-scoped --repo selector when provided", () =>
+    Effect.gen(function* () {
+      mockedRunProcess.mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          {
+            number: 900,
+            title: "Fork PR",
+            url: "https://github.com/o/r/pull/900",
+            baseRefName: "main",
+            headRefName: "statemachine",
+            state: "OPEN",
+          },
+        ]),
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const gh = yield* GitHubCli;
+        return yield* gh.listPullRequests({
+          cwd: "/repo",
+          headSelector: "statemachine",
+          repository: "octocat/sample-repo",
+        });
+      });
+
+      assert.equal(result.length, 1);
+      assert.equal(result[0]?.number, 900);
+      expect(mockedRunProcess).toHaveBeenCalledWith(
+        "gh",
+        [
+          "pr",
+          "list",
+          "--repo",
+          "github.com/octocat/sample-repo",
+          "--head",
+          "statemachine",
+          "--state",
+          "all",
+          "--limit",
+          "20",
+          "--json",
+          PULL_REQUEST_SUMMARY_JSON_FIELDS,
+        ],
+        expect.objectContaining({ cwd: "/repo" }),
+      );
+    }),
+  );
+
   it.effect("skips malformed list entries instead of hiding the healthy ones", () =>
     Effect.gen(function* () {
       mockedRunProcess.mockResolvedValueOnce({

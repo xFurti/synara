@@ -2165,11 +2165,24 @@ export default function ChatView({
         worktreePath: input.worktreePath,
         envMode: input.envMode,
         ...(input.lastKnownPr !== undefined ? { lastKnownPr: input.lastKnownPr } : {}),
+        // Groups the promoted thread under the chat it was checked out from
+        // once enough sibling branches exist (see Sidebar branch folders).
+        ...(threadId.length > 0 ? { sourceThreadId: threadId } : {}),
       };
       const storedDraftThread = getDraftThreadByProjectId(activeProject.id);
       if (storedDraftThread) {
-        setDraftThreadContext(storedDraftThread.threadId, draftThreadContext);
-        setProjectDraftThreadId(activeProject.id, storedDraftThread.threadId, draftThreadContext);
+        // A self-referencing source link would turn the draft into its own
+        // sidebar parent; drop it when the reused draft is the current chat.
+        const draftThreadContextForReuse =
+          storedDraftThread.threadId === threadId
+            ? { ...draftThreadContext, sourceThreadId: null }
+            : draftThreadContext;
+        setDraftThreadContext(storedDraftThread.threadId, draftThreadContextForReuse);
+        setProjectDraftThreadId(
+          activeProject.id,
+          storedDraftThread.threadId,
+          draftThreadContextForReuse,
+        );
         if (storedDraftThread.threadId !== threadId) {
           await navigate({
             to: "/$threadId",
@@ -8345,6 +8358,10 @@ export default function ChatView({
           threadNotes,
           projectInstructions: inheritedProjectInstructions,
         });
+        // Branch/PR drafts remember the chat they were checked out from; the
+        // server persists the link and the sidebar groups siblings beneath it.
+        const draftSourceThreadId =
+          useComposerDraftStore.getState().getDraftThread(threadIdForSend)?.sourceThreadId ?? null;
         await promoteThreadCreate(
           {
             type: "thread.create",
@@ -8364,6 +8381,9 @@ export default function ChatView({
             associatedWorktreeRef: nextAssociatedWorktreeRef,
             lastKnownPr: activeThread.lastKnownPr ?? null,
             createdAt: activeThread.createdAt,
+            ...(draftSourceThreadId
+              ? { creationSource: "chat_branch" as const, sourceThreadId: draftSourceThreadId }
+              : {}),
           },
           api,
         );
