@@ -231,6 +231,7 @@ import { useProviderStatusesForLocalConfig } from "../hooks/useProviderStatusesF
 import { useThreadHandoff } from "../hooks/useThreadHandoff";
 import { useFeedbackDialogStore } from "../feedbackDialogStore";
 import { openExternalLink } from "~/lib/linkChips";
+import { invalidateGitQueriesForCwds } from "~/lib/gitReactQuery";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
 import {
@@ -330,6 +331,9 @@ import {
   resolveThreadRowTrailingReserveClass,
   resolveThreadStatusPill,
   resolveThreadStatusTrailingIndicator,
+  resolveBranchGroupCheckStatus,
+  resolveBranchGroupRefreshCwds,
+  sortBranchGroupChildren,
   type ThreadStatusPill,
   type SidebarDerivedProjectData,
   type SidebarActionBadge,
@@ -766,6 +770,7 @@ interface PrStatusIndicator {
   icon: LucideIcon;
   tooltip: string;
   url: string;
+  ciStatus: "none" | "pending" | "success" | "failure";
 }
 
 type ThreadPr = ThreadPullRequest;
@@ -802,12 +807,22 @@ function terminalStatusFromThreadState(input: {
 function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   if (!pr) return null;
   const presentation = resolvePrStatePresentation(pr);
+  const ciStatus = resolveBranchGroupCheckStatus(pr.checks);
+  const ciLabel =
+    ciStatus === "success"
+      ? "CI passing"
+      : ciStatus === "pending"
+        ? "CI pending"
+        : ciStatus === "failure"
+          ? "CI failing"
+          : "No CI checks";
   return {
     label: presentation.label,
     colorClass: presentation.colorClass,
     icon: PR_STATE_PRESENTATION_ICONS[presentation.iconKind],
-    tooltip: `#${pr.number} ${presentation.label}: ${pr.title}`,
+    tooltip: `#${pr.number} ${presentation.label}: ${pr.title} (${ciLabel})`,
     url: pr.url,
+    ciStatus,
   };
 }
 
@@ -852,7 +867,22 @@ function ThreadPrStatusBadge({
             )}
             onClick={(event) => onOpen(event, prStatus.url)}
           >
-            <SidebarGlyph icon={prStatus.icon} variant="meta" className="size-3.5" />
+            <span className="relative inline-flex size-3.5 items-center justify-center">
+              <SidebarGlyph icon={prStatus.icon} variant="meta" className="size-3.5" />
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "absolute -right-0.5 -top-0.5 size-1.5 rounded-full ring-1 ring-background",
+                  prStatus.ciStatus === "success"
+                    ? "bg-emerald-500"
+                    : prStatus.ciStatus === "pending"
+                      ? "bg-amber-500"
+                      : prStatus.ciStatus === "failure"
+                        ? "bg-red-500"
+                        : "bg-muted-foreground/45",
+                )}
+              />
+            </span>
           </button>
         }
       />
@@ -4226,6 +4256,39 @@ export default function Sidebar() {
     threads: prPollThreads,
     projectCwdById,
   });
+  const displayBranchGroupChildrenByRootId = useMemo(
+    () =>
+      new Map(
+        [...branchGroupChildrenByRootId].map(([rootThreadId, children]) => [
+          rootThreadId,
+          sortBranchGroupChildren(children, (child) => resolveBranchChildPr(child, prByThreadId)),
+        ]),
+      ),
+    [branchGroupChildrenByRootId, prByThreadId],
+  );
+  const refreshBranchGroupChildren = useCallback(
+    (rootThreadIds: readonly ThreadId[]) => {
+      const cwds = rootThreadIds.flatMap((rootThreadId) =>
+        resolveBranchGroupRefreshCwds({
+          children: branchGroupChildrenByRootId.get(rootThreadId) ?? [],
+          projectCwdById,
+        }),
+      );
+      if (cwds.length > 0) {
+        void invalidateGitQueriesForCwds(queryClient, cwds).catch(() => undefined);
+      }
+    },
+    [branchGroupChildrenByRootId, projectCwdById, queryClient],
+  );
+  const handleBranchGroupToggle = useCallback(
+    (threadId: ThreadId) => {
+      if (collapsedBranchGroupThreadIds.includes(threadId)) {
+        refreshBranchGroupChildren([threadId]);
+      }
+      toggleBranchGroupCollapse(threadId);
+    },
+    [collapsedBranchGroupThreadIds, refreshBranchGroupChildren, toggleBranchGroupCollapse],
+  );
   const branchGroupRootThreadIds = useMemo(
     () => [...branchGroupChildrenByRootId.keys()],
     [branchGroupChildrenByRootId],
@@ -4237,13 +4300,21 @@ export default function Sidebar() {
     const currentlyExpandedRootIds = branchGroupRootThreadIds.filter(
       (threadId) => !collapsedBranchGroupThreadIds.includes(threadId),
     );
+    if (allBranchGroupsCollapsed) {
+      refreshBranchGroupChildren(branchGroupRootThreadIds);
+    }
     const nextCollapsedSet = allBranchGroupsCollapsed
       ? collapsedBranchGroupThreadIds.filter(
           (threadId) => !branchGroupRootThreadIds.includes(ThreadId.makeUnsafe(threadId)),
         )
       : [...new Set([...collapsedBranchGroupThreadIds, ...currentlyExpandedRootIds])];
     setCollapsedBranchGroupThreadIds(nextCollapsedSet);
-  }, [allBranchGroupsCollapsed, branchGroupRootThreadIds, collapsedBranchGroupThreadIds]);
+  }, [
+    allBranchGroupsCollapsed,
+    branchGroupRootThreadIds,
+    collapsedBranchGroupThreadIds,
+    refreshBranchGroupChildren,
+  ]);
   const isManualProjectSorting = appSettings.sidebarProjectSortOrder === "manual";
   const threadJumpCommandByThreadId = useMemo(() => {
     const mapping = new Map<ThreadId, NonNullable<ReturnType<typeof threadJumpCommandForIndex>>>();
@@ -4471,12 +4542,15 @@ export default function Sidebar() {
     });
     const hoverBranchChildren: ThreadHoverCardBranchChild[] | undefined = branchChildren?.map(
       (child) => {
-        const childPrStatus = prStatusIndicator(resolveBranchChildPr(child, prByThreadId));
+        const childPr = resolveBranchChildPr(child, prByThreadId);
+        const childPrStatus = prStatusIndicator(childPr);
         return {
+          id: child.id,
           title: child.title,
           timeLabel: formatRelativeTime(child.updatedAt ?? child.createdAt),
           prColorClass: childPrStatus?.colorClass ?? null,
           prIcon: childPrStatus?.icon ?? null,
+          prUrl: childPr?.url ?? null,
           status: resolveThreadStatusForSidebar(child),
         };
       },
@@ -4502,6 +4576,8 @@ export default function Sidebar() {
           model={resolveThreadModelSummary(thread.modelSelection)}
           status={hoverStatus}
           branchChildren={hoverBranchChildren}
+          onOpenPr={openExternalLink}
+          onOpenBranch={activateThreadFromSidebarIntent}
         />
       </TooltipPopup>
     );
@@ -4729,7 +4805,7 @@ export default function Sidebar() {
       isBranchGroupParent && !collapsedBranchGroupThreadIdSet.has(thread.id);
     const branchGroupChildCountLabel = `${branchChildCount} ${pluralize(branchChildCount ?? 0, "branch", "branches")}`;
     const branchGroupChildren = isBranchGroupParent
-      ? (branchGroupChildrenByRootId.get(thread.id) ?? [])
+      ? (displayBranchGroupChildrenByRootId.get(thread.id) ?? [])
       : undefined;
     const branchGroupPrCount = branchGroupChildren
       ? branchGroupChildren.filter((child) => resolveBranchChildPr(child, prByThreadId)?.url).length
@@ -4881,7 +4957,7 @@ export default function Sidebar() {
                           ],
                           onExtraAction: async (itemId: string) => {
                             if (itemId === "branch-group-toggle") {
-                              toggleBranchGroupCollapse(thread.id);
+                              handleBranchGroupToggle(thread.id);
                               return;
                             }
                             if (itemId === "branch-group-new-thread") {
@@ -4935,7 +5011,7 @@ export default function Sidebar() {
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
-                      toggleBranchGroupCollapse(thread.id);
+                      handleBranchGroupToggle(thread.id);
                     }}
                     onPointerDown={(event) => event.stopPropagation()}
                     onPointerUp={(event) => event.stopPropagation()}
@@ -4987,7 +5063,7 @@ export default function Sidebar() {
                   <BranchGroupCountChip
                     label={branchGroupChildCountLabel}
                     childCount={branchChildCount ?? 0}
-                    visible={!branchGroupExpanded}
+                    visible
                   />
                 </>
               ) : null}
@@ -5296,8 +5372,11 @@ export default function Sidebar() {
                   // region and the close would be instant instead of animated.
                   const mountedBranchChildren =
                     childEntries.length > 0
-                      ? childEntries
-                      : (branchGroupChildrenByRootId.get(entry.thread.id) ?? []);
+                      ? displayBranchGroupChildrenByRootId.get(entry.thread.id)?.flatMap((child) => {
+                          const childEntry = childEntries.find((entry) => entry.rowId === child.id);
+                          return childEntry ? [childEntry] : [];
+                        }) ?? childEntries
+                      : (displayBranchGroupChildrenByRootId.get(entry.thread.id) ?? []);
 
                   renderedNodes.push(
                     <SidebarMenuSubItem key={`${entry.rowId}:branch-group`} className="w-full p-0">

@@ -46,6 +46,7 @@ export function toThreadPullRequest(
         additions?: number | null | undefined;
         deletions?: number | null | undefined;
         changedFiles?: number | null | undefined;
+        checks?: NonNullable<ThreadPullRequest>["checks"];
       },
 ): ThreadPullRequest {
   return {
@@ -60,6 +61,7 @@ export function toThreadPullRequest(
     additions: pr.additions ?? null,
     deletions: pr.deletions ?? null,
     changedFiles: pr.changedFiles ?? null,
+    ...(pr.checks ? { checks: pr.checks } : {}),
   };
 }
 
@@ -83,15 +85,21 @@ export function resolveThreadPullRequestFallback(input: {
   });
 }
 
-/**
- * Resolves the PR badge for each given thread. Callers pass only the rows they render:
- * every distinct checkout behind them gets a polled git-status query and every stored PR
- * reference a polled lookup, so hidden history must stay out of the input.
- */
-export function useThreadPullRequests(input: {
+type ThreadGitTarget = {
+  threadId: ThreadId;
+  branch: string | null;
+  lastKnownPr: OrchestrationThreadPullRequest | null;
+  hasDedicatedWorktree: boolean;
+  cwd: string | null;
+};
+
+function useThreadGitStatusData(input: {
   readonly threads: readonly ThreadPullRequestSource[];
   readonly projectCwdById: ReadonlyMap<ProjectId, string>;
-}): ReadonlyMap<ThreadId, ThreadPullRequest> {
+}): {
+  readonly threadGitTargets: readonly ThreadGitTarget[];
+  readonly statusByThreadId: ReadonlyMap<ThreadId, GitStatusResult>;
+} {
   const { threads, projectCwdById } = input;
   const threadGitTargets = useMemo(
     () =>
@@ -126,6 +134,47 @@ export function useThreadPullRequests(input: {
       refetchInterval: THREAD_PR_REFETCH_INTERVAL_MS,
     })),
   });
+  return {
+    threadGitTargets,
+    statusByThreadId: useMemo(() => {
+      const statusByCwd = new Map<string, GitStatusResult>();
+      for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
+        const cwd = threadGitStatusCwds[index];
+        const status = threadGitStatusQueries[index]?.data;
+        if (cwd && status) statusByCwd.set(cwd, status);
+      }
+      const statusByThreadId = new Map<ThreadId, GitStatusResult>();
+      for (const target of threadGitTargets) {
+        const status = target.cwd ? statusByCwd.get(target.cwd) : undefined;
+        if (status) statusByThreadId.set(target.threadId, status);
+      }
+      return statusByThreadId;
+    }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]),
+  };
+}
+
+export function useThreadGitStatuses(input: {
+  readonly threads: readonly ThreadPullRequestSource[];
+  readonly projectCwdById: ReadonlyMap<ProjectId, string>;
+}): {
+  readonly statusByThreadId: ReadonlyMap<ThreadId, GitStatusResult>;
+} {
+  const statusData = useThreadGitStatusData(input);
+  return { statusByThreadId: statusData.statusByThreadId };
+}
+
+/**
+ * Resolves the PR badge for each given thread. Callers pass only the rows they render:
+ * every distinct checkout behind them gets a polled git-status query and every stored PR
+ * reference a polled lookup, so hidden history must stay out of the input.
+ */
+export function useThreadPullRequests(input: {
+  readonly threads: readonly ThreadPullRequestSource[];
+  readonly projectCwdById: ReadonlyMap<ProjectId, string>;
+}): ReadonlyMap<ThreadId, ThreadPullRequest> {
+  const { threads, projectCwdById } = input;
+  const { threadGitTargets, statusByThreadId: threadGitStatusByThreadId } =
+    useThreadGitStatusData(input);
   const threadStoredPrTargets = useMemo(
     () =>
       threadGitTargets.flatMap((target) =>
@@ -148,18 +197,6 @@ export function useThreadPullRequests(input: {
     })),
   });
   return useMemo(() => {
-    const statusByCwd = new Map<string, GitStatusResult>();
-    for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
-      const cwd = threadGitStatusCwds[index];
-      if (!cwd) continue;
-      // Keep the last successful snapshot during a failed background refetch. React Query
-      // retains that data, and it is still a better branch authority than stale thread metadata.
-      const status = threadGitStatusQueries[index]?.data;
-      if (status) {
-        statusByCwd.set(cwd, status);
-      }
-    }
-
     const storedPrByThreadId = new Map<ThreadId, ThreadPullRequest>();
     for (let index = 0; index < threadStoredPrTargets.length; index += 1) {
       const target = threadStoredPrTargets[index];
@@ -176,7 +213,7 @@ export function useThreadPullRequests(input: {
 
     const map = new Map<ThreadId, ThreadPullRequest>();
     for (const target of threadGitTargets) {
-      const status = target.cwd ? statusByCwd.get(target.cwd) : undefined;
+      const status = threadGitStatusByThreadId.get(target.threadId);
       const persistedPr =
         storedPrByThreadId.get(target.threadId) ??
         (target.lastKnownPr ? toThreadPullRequest(target.lastKnownPr) : null);
@@ -194,8 +231,7 @@ export function useThreadPullRequests(input: {
     }
     return map;
   }, [
-    threadGitStatusCwds,
-    threadGitStatusQueries,
+    threadGitStatusByThreadId,
     threadGitTargets,
     threadStoredPrQueries,
     threadStoredPrTargets,

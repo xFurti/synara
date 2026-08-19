@@ -327,6 +327,8 @@ const GitStatusPr = Schema.Struct({
   additions: Schema.NullOr(NonNegativeInt),
   deletions: Schema.NullOr(NonNegativeInt),
   changedFiles: Schema.NullOr(NonNegativeInt),
+  // Optional for status snapshots produced before CI was added to the live PR path.
+  checks: Schema.optional(Schema.Array(GitPullRequestCheck)),
 });
 
 export const GitStatusResult = Schema.Struct({

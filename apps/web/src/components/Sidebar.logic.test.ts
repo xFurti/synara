@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildActiveBranchGroupChildrenMap,
   buildProjectThreadTree,
   createSidebarThreadHoverAnchorId,
   derivePinnedProjectIdsForSidebar,
@@ -48,6 +49,9 @@ import {
   resolveThreadRowTrailingReserveClass,
   resolveThreadStatusPill,
   resolveThreadStatusTrailingIndicator,
+  resolveBranchGroupCheckStatus,
+  resolveBranchGroupRefreshCwds,
+  sortBranchGroupChildren,
   isUrgentThreadStatusPill,
   type ThreadStatusPill,
   shouldShowDebugFeatureFlagsMenu,
@@ -1583,6 +1587,86 @@ describe("buildProjectThreadTree branch groups", () => {
       sourceThreadId: input.source ? ThreadId.makeUnsafe(input.source) : null,
       ...(input.createdAt ? { createdAt: input.createdAt } : {}),
     });
+
+  it("orders children by PR state and then recent activity", () => {
+    const children = [
+      makeSidebarThreadSummary({
+        id: ThreadId.makeUnsafe("no-pr"),
+        sourceThreadId: ThreadId.makeUnsafe("thread-main"),
+        updatedAt: "2026-03-10T12:00:00.000Z",
+      }),
+      makeSidebarThreadSummary({
+        id: ThreadId.makeUnsafe("merged"),
+        sourceThreadId: ThreadId.makeUnsafe("thread-main"),
+        updatedAt: "2026-03-09T12:00:00.000Z",
+        lastKnownPr: {
+          number: 2,
+          title: "Merged",
+          url: "https://github.com/example/repo/pull/2",
+          baseBranch: "main",
+          headBranch: "feature/merged",
+          state: "merged",
+        },
+      }),
+      makeSidebarThreadSummary({
+        id: ThreadId.makeUnsafe("open-old"),
+        sourceThreadId: ThreadId.makeUnsafe("thread-main"),
+        updatedAt: "2026-03-08T12:00:00.000Z",
+        lastKnownPr: {
+          number: 1,
+          title: "Open",
+          url: "https://github.com/example/repo/pull/1",
+          baseBranch: "main",
+          headBranch: "feature/open",
+          state: "open",
+        },
+      }),
+    ];
+
+    expect(sortBranchGroupChildren(children).map((child) => child.id)).toEqual([
+      "open-old",
+      "merged",
+      "no-pr",
+    ]);
+    expect(
+      buildActiveBranchGroupChildrenMap([
+        makeSidebarThreadSummary({ id: ThreadId.makeUnsafe("thread-main") }),
+        ...children,
+      ]).get(ThreadId.makeUnsafe("thread-main"))?.map((child) => child.id),
+    ).toEqual(["open-old", "merged", "no-pr"]);
+  });
+
+  it("resolves only the child workspaces when a folder opens", () => {
+    const projectId = ProjectId.makeUnsafe("project-1");
+    expect(
+      resolveBranchGroupRefreshCwds({
+        children: [
+          makeSidebarThreadSummary({
+            projectId,
+            envMode: "worktree",
+            worktreePath: "/tmp/worktree-a",
+          }),
+          makeSidebarThreadSummary({
+            projectId,
+            envMode: "worktree",
+            worktreePath: "/tmp/worktree-a",
+          }),
+        ],
+        projectCwdById: new Map([[projectId, "/tmp/repo"]]),
+      }),
+    ).toEqual(["/tmp/worktree-a"]);
+  });
+
+  it("aggregates CI checks with failure taking precedence over pending", () => {
+    expect(resolveBranchGroupCheckStatus([{ status: "success" }])).toBe("success");
+    expect(resolveBranchGroupCheckStatus([{ status: "pending" }, { status: "success" }])).toBe(
+      "pending",
+    );
+    expect(resolveBranchGroupCheckStatus([{ status: "failure" }, { status: "pending" }])).toBe(
+      "failure",
+    );
+    expect(resolveBranchGroupCheckStatus([])).toBe("none");
+  });
 
   it("keeps branch threads flat when grouping is not requested", () => {
     const rows = buildProjectThreadTree({

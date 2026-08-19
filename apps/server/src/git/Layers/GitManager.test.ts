@@ -409,6 +409,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
               },
             ]),
           ],
+          pullRequestChecks: [
+            {
+              name: "unit",
+              status: "success",
+              url: "https://github.com/example/checks/1",
+            },
+          ],
         },
       });
 
@@ -426,6 +433,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         additions: 38,
         deletions: 36,
         changedFiles: 3,
+        checks: [
+          {
+            name: "unit",
+            status: "success",
+            url: "https://github.com/example/checks/1",
+          },
+        ],
       });
     }),
   );

@@ -5,6 +5,7 @@ import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import type {
   GitActionProgressEvent,
   GitActionProgressPhase,
+  GitPullRequestCheck,
   GitStackedAction,
   ModelSelection,
   ProviderStartOptions,
@@ -59,6 +60,7 @@ interface ResolvedPullRequest {
   additions: number | null;
   deletions: number | null;
   changedFiles: number | null;
+  checks?: ReadonlyArray<GitPullRequestCheck>;
 }
 
 interface PullRequestHeadRemoteInfo {
@@ -601,6 +603,7 @@ function toResolvedPullRequest(pr: {
   additions?: number | null;
   deletions?: number | null;
   changedFiles?: number | null;
+  checks?: ReadonlyArray<GitPullRequestCheck>;
 }): ResolvedPullRequest {
   return {
     number: pr.number,
@@ -614,6 +617,7 @@ function toResolvedPullRequest(pr: {
     additions: pr.additions ?? null,
     deletions: pr.deletions ?? null,
     changedFiles: pr.changedFiles ?? null,
+    ...(pr.checks ? { checks: pr.checks } : {}),
   };
 }
 
@@ -1426,14 +1430,23 @@ export const makeGitManager = Effect.gen(function* () {
   const status: GitManagerShape["status"] = Effect.fnUntraced(function* (input) {
     const details = yield* gitCore.statusDetails(input.cwd);
 
-    const pr =
-      details.branch !== null
-        ? yield* pullRequestForBranch({
-            cwd: input.cwd,
-            branch: details.branch,
-            upstreamRef: details.upstreamRef,
-          }).pipe(Effect.catch(() => Effect.succeed(null)))
-        : null;
+    let pr: ResolvedPullRequest | null = null;
+    if (details.branch !== null) {
+      const latest = yield* findLatestPr(input.cwd, {
+        branch: details.branch,
+        upstreamRef: details.upstreamRef,
+      }).pipe(Effect.catch(() => Effect.succeed(null)));
+      if (latest) {
+        const withChecks = yield* gitHubCli
+          .getPullRequestWithChecks({ cwd: input.cwd, reference: String(latest.number) })
+          .pipe(Effect.catch(() => Effect.succeed(null)));
+        pr = toResolvedPullRequest(
+          withChecks && withChecks.checks.length > 0
+            ? { ...latest, checks: withChecks.checks }
+            : latest,
+        );
+      }
+    }
 
     return {
       branch: details.branch,

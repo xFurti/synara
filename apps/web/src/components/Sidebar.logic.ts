@@ -4,13 +4,17 @@
 
 import {
   MAX_PINNED_PROJECTS,
+  type GitPullRequestCheckStatus,
   type KeybindingCommand,
   type ProjectId,
   type PullRequestReviewRequestCountResult,
   type ThreadId,
 } from "@synara/contracts";
 import { pluralize } from "@synara/shared/text";
-import { resolveThreadEnvironmentMode } from "@synara/shared/threadEnvironment";
+import {
+  resolveThreadEnvironmentMode,
+  resolveThreadWorkspaceCwd,
+} from "@synara/shared/threadEnvironment";
 import { isWorkspaceRootWithin, workspaceRootsEqual } from "@synara/shared/threadWorkspace";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "../appSettings";
 import { resolveRestorableThreadRoute, type LastThreadRoute } from "../chatRouteRestore";
@@ -1009,6 +1013,71 @@ function resolveBranchGroupRootThreadId<
 const EMPTY_BRANCH_GROUP_CHILDREN: ReadonlyMap<ThreadId, readonly SidebarThreadSummary[]> =
   new Map();
 
+export type BranchGroupCheckStatus = "none" | "pending" | "success" | "failure";
+
+export function resolveBranchGroupCheckStatus(
+  checks: readonly { status: GitPullRequestCheckStatus }[] | null | undefined,
+): BranchGroupCheckStatus {
+  if (!checks || checks.length === 0) return "none";
+  if (checks.some((check) => check.status === "failure" || check.status === "cancelled")) {
+    return "failure";
+  }
+  if (checks.some((check) => check.status === "pending")) return "pending";
+  return "success";
+}
+
+export function sortBranchGroupChildren<
+  T extends Pick<SidebarThreadSummary, "id" | "sourceThreadId">,
+>(
+  children: readonly T[],
+  resolvePr?: (thread: T) => { state: "open" | "closed" | "merged" } | null | undefined,
+): readonly T[] {
+  return children
+    .map((thread, index) => ({ thread, index }))
+    .toSorted((left, right) => {
+      const leftPr = resolvePr
+        ? resolvePr(left.thread)
+        : (left.thread as T & { lastKnownPr?: SidebarThreadSummary["lastKnownPr"] }).lastKnownPr;
+      const rightPr = resolvePr
+        ? resolvePr(right.thread)
+        : (right.thread as T & { lastKnownPr?: SidebarThreadSummary["lastKnownPr"] }).lastKnownPr;
+      const rank = (pr: SidebarThreadSummary["lastKnownPr"] | undefined) => {
+        if (!pr) return 3;
+        if (pr.state === "open") return 0;
+        if (pr.state === "merged") return 1;
+        return 2;
+      };
+      const rankDelta = rank(leftPr) - rank(rightPr);
+      if (rankDelta !== 0) return rankDelta;
+
+      const leftUpdatedAt = (left.thread as T & { updatedAt?: string }).updatedAt;
+      const rightUpdatedAt = (right.thread as T & { updatedAt?: string }).updatedAt;
+      const activityDelta = (rightUpdatedAt ? Date.parse(rightUpdatedAt) : 0) -
+        (leftUpdatedAt ? Date.parse(leftUpdatedAt) : 0);
+      return activityDelta !== 0 ? activityDelta : left.index - right.index;
+    })
+    .map(({ thread }) => thread);
+}
+
+export function resolveBranchGroupRefreshCwds(input: {
+  children: readonly Pick<SidebarThreadSummary, "projectId" | "envMode" | "worktreePath">[];
+  projectCwdById: ReadonlyMap<ProjectId, string>;
+}): readonly string[] {
+  return [
+    ...new Set(
+      input.children
+        .map((child) =>
+          resolveThreadWorkspaceCwd({
+            projectCwd: input.projectCwdById.get(child.projectId) ?? null,
+            envMode: child.envMode,
+            worktreePath: child.worktreePath,
+          }),
+        )
+        .filter((cwd): cwd is string => cwd !== null),
+    ),
+  ];
+}
+
 export function buildActiveBranchGroupChildrenMap<
   T extends Pick<SidebarThreadSummary, "id" | "sourceThreadId">,
 >(
@@ -1031,7 +1100,7 @@ export function buildActiveBranchGroupChildrenMap<
   const activeGroups = new Map<T["id"], readonly T[]>();
   for (const [rootThreadId, children] of childrenByRootId) {
     if (children.length >= minChildCount) {
-      activeGroups.set(rootThreadId, children);
+      activeGroups.set(rootThreadId, sortBranchGroupChildren(children));
     }
   }
   return activeGroups;
@@ -1124,7 +1193,9 @@ export function buildProjectThreadTree<
   const visit = (thread: T, depth: number, rootThreadId: T["id"]) => {
     const childEdges = childrenByParentId.get(thread.id) ?? [];
     const subagentChildren = childEdges.filter((edge) => edge.kind === "subagent");
-    const branchChildren = childEdges.filter((edge) => edge.kind === "branch");
+    const branchChildren = sortBranchGroupChildren(
+      childEdges.filter((edge) => edge.kind === "branch").map((edge) => edge.thread),
+    ).map((child) => ({ thread: child, kind: "branch" as const }));
     const revealsActiveDescendant = activeThreadAncestorIds.has(thread.id);
     const branchGroupExpanded =
       groupingEnabled && branchChildren.length > 0 && !collapsedBranchGroupThreadIds.has(thread.id);

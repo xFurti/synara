@@ -10,7 +10,12 @@
 
 import type { ReactNode } from "react";
 
-import { FastModeIcon, GitBranchIcon, type LucideIcon, WorktreeIcon } from "~/lib/icons";
+import {
+  FastModeIcon,
+  GitBranchIcon,
+  type LucideIcon,
+  WorktreeIcon,
+} from "~/lib/icons";
 import { cn } from "~/lib/utils";
 import type { ThreadModelSummary } from "~/lib/threadModelSummary";
 import { FolderClosed } from "./FolderClosed";
@@ -24,14 +29,15 @@ import {
 } from "./sidebarHoverCardStyles";
 
 export type ThreadHoverCardBranchChild = {
+  id: string;
   title: string;
   /** Pre-formatted relative time (e.g. "2h"); omitted when unavailable. */
   timeLabel: string | null;
   prColorClass: string | null;
   /** GitHub-style PR state glyph (open/merged/closed/draft/conflicts). */
   prIcon: LucideIcon | null;
-  /** Live thread status, used to color the branch glyph only when something
-   *  is actually happening on the branch (same semantics as thread rows). */
+  prUrl: string | null;
+  /** Actionable live status for the child thread, when one exists. */
   status: ThreadStatusPill | null;
 };
 
@@ -53,6 +59,8 @@ export type ThreadHoverCardContentProps = {
   status: ThreadStatusPill | null;
   /** Branch threads nested under this folder row; rendered as a compact list. */
   branchChildren?: readonly ThreadHoverCardBranchChild[] | undefined;
+  onOpenPr?: ((url: string) => void) | undefined;
+  onOpenBranch?: ((threadId: string) => void) | undefined;
 };
 
 const META_ROW_CLASS_NAME = `${SIDEBAR_HOVER_CARD_ROW_CLASS_NAME} text-foreground/80`;
@@ -95,6 +103,8 @@ export function ThreadHoverCardContent({
   model,
   status,
   branchChildren,
+  onOpenPr,
+  onOpenBranch,
 }: ThreadHoverCardContentProps) {
   const hasMeta =
     Boolean(projectName) ||
@@ -174,37 +184,79 @@ export function ThreadHoverCardContent({
       ) : null}
       {branchChildCount > 0 ? (
         <div className="flex flex-col gap-0 border-t border-border/60 pt-1.5">
-          <span className="px-1 text-[10px] font-medium text-muted-foreground/70">
-            {branchChildCount} {branchChildCount === 1 ? "branch" : "branches"}
-          </span>
-          {branchChildren?.map((child) => {
-            const PrIcon = child.prIcon;
-            return (
-              <span key={child.title} className={cn(META_ROW_CLASS_NAME, "text-foreground/70")}>
-                <span
-                  aria-hidden="true"
-                  className="inline-flex size-3.5 shrink-0 items-center justify-center"
+          <div className="flex items-center gap-2 px-1">
+            <span className="text-[10px] font-medium text-muted-foreground/70">
+              {branchChildCount} {branchChildCount === 1 ? "branch" : "branches"}
+            </span>
+          </div>
+          <div className="ml-1 border-l border-border/45 pl-1">
+            {branchChildren?.map((child) => {
+              const PrIcon = child.prIcon;
+              return (
+                <div
+                  key={child.id}
+                  className={cn(META_ROW_CLASS_NAME, "min-h-6 text-foreground/70")}
                 >
-                  {PrIcon ? (
-                    <PrIcon className={cn("size-3.5", child.prColorClass)} />
-                  ) : (
-                    <GitBranchIcon
-                      className={cn(
-                        "size-3.5",
-                        child.status?.colorClass ?? "text-muted-foreground/70",
-                      )}
-                    />
-                  )}
-                </span>
-                <span className="min-w-0 flex-1 truncate">{child.title}</span>
+                {PrIcon && child.prUrl && onOpenPr ? (
+                  <button
+                    type="button"
+                    aria-label={`Open PR for ${child.title}`}
+                    title="Open PR"
+                    className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm outline-hidden transition-colors hover:bg-muted focus-visible:ring-1 focus-visible:ring-ring"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onOpenPr(child.prUrl!);
+                    }}
+                  >
+                    <PrIcon className={cn("size-3.5", child.prColorClass)} aria-hidden />
+                  </button>
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    className="inline-flex size-3.5 shrink-0 items-center justify-center"
+                  >
+                    {PrIcon ? (
+                      <PrIcon className={cn("size-3.5", child.prColorClass)} />
+                    ) : (
+                      <GitBranchIcon className="size-3.5 text-muted-foreground/70" />
+                    )}
+                  </span>
+                )}
+                {onOpenBranch ? (
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 truncate text-left hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onOpenBranch(child.id);
+                    }}
+                    title={`Open ${child.title}`}
+                  >
+                    {child.title}
+                  </button>
+                ) : (
+                  <span className="min-w-0 flex-1 truncate">{child.title}</span>
+                )}
                 {child.timeLabel ? (
                   <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/55">
                     {child.timeLabel}
                   </span>
                 ) : null}
-              </span>
-            );
-          })}
+                {child.status ? (
+                  <span
+                    className="ml-1 inline-flex size-3.5 shrink-0 items-center justify-center"
+                    title={child.status.label}
+                    aria-label={child.status.label}
+                  >
+                    <SidebarStatusTrailingGlyph status={child.status} />
+                  </span>
+                ) : null}
+                </div>
+              );
+            })}
+          </div>
         </div>
       ) : null}
     </div>
