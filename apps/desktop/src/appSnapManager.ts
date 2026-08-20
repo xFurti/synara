@@ -342,7 +342,12 @@ function isPermissionErrorCode(code: string): boolean {
 }
 
 function isBenignCaptureErrorCode(code: string): boolean {
-  return code === "capture_in_progress" || code === "capture-in-progress";
+  return (
+    code === "capture_in_progress" ||
+    code === "capture-in-progress" ||
+    code === "excluded_app" ||
+    code === "excluded_frontmost_application"
+  );
 }
 
 export class DesktopAppSnapManager {
