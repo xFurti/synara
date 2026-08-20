@@ -19,6 +19,9 @@ import {
   createDesktopPlatformBuildConfig,
   MAC_APPSNAP_HELPER_STAGE_PATH,
   MAC_DEVICE_HELPER_RESOURCE_PATH,
+  WINDOWS_APPSNAP_HELPER_BUNDLE_PATH,
+  WINDOWS_APPSNAP_HELPER_RESOURCE_NAME,
+  WINDOWS_APPSNAP_HELPER_STAGE_PATH,
   validateDesktopNativeBuildHost,
 } from "./lib/desktop-platform-build-config.ts";
 import { synaraDesktopIdentity } from "@synara/shared/desktopIdentity";
@@ -867,6 +870,26 @@ const stageMacAppSnapHelper = Effect.fn("stageMacAppSnapHelper")(function* (
   }
 });
 
+const stageWindowsAppSnapHelper = Effect.fn("stageWindowsAppSnapHelper")(function* (
+  stageAppDir: string,
+) {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const repoRoot = yield* RepoRoot;
+  const sourcePath = path.join(repoRoot, WINDOWS_APPSNAP_HELPER_STAGE_PATH);
+  const outputPath = path.join(stageAppDir, WINDOWS_APPSNAP_HELPER_STAGE_PATH);
+
+  if (!(yield* fs.exists(sourcePath))) {
+    return yield* new BuildScriptError({
+      message: `Windows AppSnap helper was not found at ${sourcePath}`,
+    });
+  }
+
+  yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
+  yield* fs.copyFile(sourcePath, outputPath);
+  yield* Effect.log("[desktop-artifact] Staged Windows AppSnap helper.");
+});
+
 const assertPackagedMacDeviceHelper = Effect.fn("assertPackagedMacDeviceHelper")(function* (
   stageDistDir: string,
   productName: string,
@@ -898,6 +921,37 @@ const assertPackagedMacDeviceHelper = Effect.fn("assertPackagedMacDeviceHelper")
     message: `Packaged macOS app is missing physical device helper sources under Contents/${MAC_DEVICE_HELPER_RESOURCE_PATH}`,
   });
 });
+
+const assertPackagedWindowsAppSnapHelper = Effect.fn("assertPackagedWindowsAppSnapHelper")(
+  function* (stageDistDir: string) {
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
+    const entries = yield* fs.readDirectory(stageDistDir);
+    for (const entry of entries) {
+      const packagedEntryPath = path.join(stageDistDir, entry);
+      const packagedEntryStat = yield* fs
+        .stat(packagedEntryPath)
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      if (!packagedEntryStat || packagedEntryStat.type !== "Directory") continue;
+      if (!entry.includes("unpacked")) continue;
+
+      const extraFilesHelper = path.join(packagedEntryPath, WINDOWS_APPSNAP_HELPER_BUNDLE_PATH);
+      const extraResourcesHelper = path.join(
+        packagedEntryPath,
+        "resources",
+        WINDOWS_APPSNAP_HELPER_RESOURCE_NAME,
+      );
+      if ((yield* fs.exists(extraFilesHelper)) || (yield* fs.exists(extraResourcesHelper))) {
+        return;
+      }
+    }
+
+    return yield* new BuildScriptError({
+      message:
+        "Packaged Windows app is missing the AppSnap helper. Expected Helpers/synara-appsnap-helper.mjs next to the executable or resources/synara-appsnap-helper.mjs.",
+    });
+  },
+);
 
 const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   options: ResolvedBuildOptions,
@@ -1093,6 +1147,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* stageMacAppSnapHelper(stageAppDir, options.arch, options.verbose);
   }
 
+  if (options.platform === "win") {
+    yield* stageWindowsAppSnapHelper(stageAppDir);
+  }
+
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   yield* fs.copy(stageResourcesDir, path.join(stageAppDir, "apps/desktop/prod-resources"));
 
@@ -1209,6 +1267,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       stageDistDir,
       synaraDesktopIdentity(options.flavor).displayName,
     );
+  }
+
+  if (options.platform === "win") {
+    yield* assertPackagedWindowsAppSnapHelper(stageDistDir);
   }
 
   if (options.platform === "mac" && options.target === "dmg" && options.signed) {

@@ -1720,7 +1720,19 @@ function resolveNotificationIconPath(): string | null {
 function resolveAppSnapHelperPath(): string {
   if (process.platform === "win32") {
     if (app.isPackaged) {
-      return Path.resolve(process.resourcesPath, "..", "Helpers", "synara-appsnap-helper.mjs");
+      const extraFilesPath = Path.resolve(
+        process.resourcesPath,
+        "..",
+        "Helpers",
+        "synara-appsnap-helper.mjs",
+      );
+      const extraResourcesPath = Path.resolve(
+        process.resourcesPath,
+        "synara-appsnap-helper.mjs",
+      );
+      if (FS.existsSync(extraFilesPath)) return extraFilesPath;
+      if (FS.existsSync(extraResourcesPath)) return extraResourcesPath;
+      return extraFilesPath;
     }
     return Path.resolve(__dirname, "..", "native", "appsnap-windows", "synara-appsnap-helper.mjs");
   }

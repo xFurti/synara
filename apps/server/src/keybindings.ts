@@ -146,7 +146,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+7", command: "thread.jump.7", when: "!terminalFocus && !terminalWorkspaceOpen" },
   { key: "mod+8", command: "thread.jump.8", when: "!terminalFocus && !terminalWorkspaceOpen" },
   { key: "mod+9", command: "thread.jump.9", when: "!terminalFocus && !terminalWorkspaceOpen" },
-  // Copying the active thread id is not terminal input on macOS, but Ctrl+Shift+C is the
+  // Copying the active thread link is not terminal input on macOS, but Ctrl+Shift+C is the
   // terminal copy chord on Linux/Windows, so it keeps the same `|| isMac` escape hatch.
   { key: "mod+shift+c", command: "thread.copyLink", when: "!terminalFocus || isMac" },
   { key: "mod+shift+]", command: "chat.visible.next", when: "!terminalFocus" },
@@ -710,6 +710,37 @@ function migrateOutdatedDefaultKeybindingRule(rule: KeybindingRule): {
 // The original sidebar search default used `mod+k`, which resolves to Ctrl+K on
 // Windows/Linux but also captures the native kill-to-end-of-line chord on macOS.
 // Expand only that exact shipped default so other user-defined search chords remain intact.
+const OUTDATED_COPY_ID_SHORTCUT = "mod+shift+c";
+
+// Existing installs saved the old copy-id default on Ctrl/Cmd+Shift+C. The shipped
+// default now copies a local task link on that chord; rewrite only that exact
+// leftover so copy-link is not skipped as a shortcut conflict.
+function migrateOutdatedCopyIdDefaultToCopyLink(rules: readonly KeybindingRule[]): {
+  readonly rules: KeybindingRule[];
+  readonly migratedCount: number;
+} {
+  const alreadyHasCopyLinkOnChord = rules.some(
+    (rule) => rule.command === "thread.copyLink" && rule.key === OUTDATED_COPY_ID_SHORTCUT,
+  );
+  if (alreadyHasCopyLinkOnChord) {
+    return { rules: [...rules], migratedCount: 0 };
+  }
+
+  let migratedCount = 0;
+  const next = rules.map((rule) => {
+    if (rule.command !== "thread.copyId" || rule.key !== OUTDATED_COPY_ID_SHORTCUT) {
+      return rule;
+    }
+    migratedCount += 1;
+    return {
+      key: rule.key,
+      command: "thread.copyLink",
+      ...(rule.when === undefined ? {} : { when: rule.when }),
+    };
+  });
+  return { rules: next, migratedCount };
+}
+
 function migrateOutdatedSidebarSearchDefault(rules: readonly KeybindingRule[]): {
   readonly rules: KeybindingRule[];
   readonly migratedCount: number;
@@ -1007,7 +1038,9 @@ const makeKeybindings = Effect.gen(function* () {
 
     const sidebarSearchMigration = migrateOutdatedSidebarSearchDefault(keybindings);
     migratedDefaultRuleCount += sidebarSearchMigration.migratedCount;
-    const relaxed = relaxCreationCommandTerminalGuards(sidebarSearchMigration.rules);
+    const copyLinkMigration = migrateOutdatedCopyIdDefaultToCopyLink(sidebarSearchMigration.rules);
+    migratedDefaultRuleCount += copyLinkMigration.migratedCount;
+    const relaxed = relaxCreationCommandTerminalGuards(copyLinkMigration.rules);
     migratedDefaultRuleCount += relaxed.migratedCount;
 
     return {

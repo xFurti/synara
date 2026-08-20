@@ -502,6 +502,35 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
+  it.effect("migrates the old copy-id default chord to copy-link", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+shift+c", command: "thread.copyId", when: "!terminalFocus || isMac" },
+      ]);
+
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        yield* keybindings.syncDefaultKeybindingsOnStartup;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.isTrue(
+        persisted.some(
+          (entry) =>
+            entry.key === "mod+shift+c" &&
+            entry.command === "thread.copyLink" &&
+            entry.when === "!terminalFocus || isMac",
+        ),
+      );
+      assert.isFalse(
+        persisted.some(
+          (entry) => entry.key === "mod+shift+c" && entry.command === "thread.copyId",
+        ),
+      );
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
   it.effect("migrates the old sidebar search default without preserving macOS Ctrl+K", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig;

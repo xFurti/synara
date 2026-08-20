@@ -14,6 +14,9 @@ import {
   validateDesktopNativeBuildHost,
   WINDOWS_INSTALLER_GUID,
   WINDOWS_CANARY_INSTALLER_GUID,
+  WINDOWS_APPSNAP_HELPER_BUNDLE_PATH,
+  WINDOWS_APPSNAP_HELPER_RESOURCE_NAME,
+  WINDOWS_APPSNAP_HELPER_STAGE_PATH,
 } from "./lib/desktop-platform-build-config.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 
@@ -97,10 +100,22 @@ describe("createDesktopPlatformBuildConfig", () => {
     });
 
     assert.equal(win.mac, undefined);
+    assert.equal(
+      WINDOWS_APPSNAP_HELPER_STAGE_PATH,
+      "apps/desktop/native/appsnap-windows/synara-appsnap-helper.mjs",
+    );
+    assert.equal(WINDOWS_APPSNAP_HELPER_BUNDLE_PATH, "Helpers/synara-appsnap-helper.mjs");
+    assert.equal(WINDOWS_APPSNAP_HELPER_RESOURCE_NAME, "synara-appsnap-helper.mjs");
     assert.deepStrictEqual(win.extraFiles, [
       {
-        from: "apps/desktop/native/appsnap-windows/synara-appsnap-helper.mjs",
-        to: "Helpers/synara-appsnap-helper.mjs",
+        from: WINDOWS_APPSNAP_HELPER_STAGE_PATH,
+        to: WINDOWS_APPSNAP_HELPER_BUNDLE_PATH,
+      },
+    ]);
+    assert.deepStrictEqual(win.extraResources, [
+      {
+        from: WINDOWS_APPSNAP_HELPER_STAGE_PATH,
+        to: WINDOWS_APPSNAP_HELPER_RESOURCE_NAME,
       },
     ]);
     assert.deepStrictEqual(win.asarUnpack, ["node_modules/node-pty/**"]);
