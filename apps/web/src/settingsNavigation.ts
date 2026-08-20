@@ -32,6 +32,7 @@ export type SettingsNavGroupId = "personal" | "integrations" | "coding" | "syste
 export const SETTINGS_TARGETS = {
   providerUpdates: "provider-updates",
   environmentPanel: "environment-panel",
+  taskTemplates: "task-templates",
 } as const;
 
 export type SettingsNavItem = {

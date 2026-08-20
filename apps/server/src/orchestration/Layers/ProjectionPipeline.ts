@@ -581,6 +581,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             lastKnownPr: event.payload.lastKnownPr ?? null,
             latestTurnId: null,
             handoff: event.payload.handoff,
+            bakeoff: event.payload.bakeoff ?? null,
             pinnedMessages: null,
             threadMarkers: null,
             notes: null,
@@ -688,6 +689,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
                 ? { lastKnownPr: event.payload.lastKnownPr }
                 : {}),
               ...(event.payload.handoff !== undefined ? { handoff: event.payload.handoff } : {}),
+              ...(event.payload.bakeoff !== undefined ? { bakeoff: event.payload.bakeoff } : {}),
               ...(event.payload.pinnedMessages !== undefined
                 ? { pinnedMessages: event.payload.pinnedMessages }
                 : {}),

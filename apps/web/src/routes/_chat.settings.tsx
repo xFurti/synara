@@ -59,6 +59,7 @@ import {
   SettingsSectionShell,
 } from "../components/settings/SettingsPanelPrimitives";
 import { SkillsSettingsPanel } from "../components/settings/SkillsSettingsPanel";
+import { TaskTemplatesSettings } from "../components/settings/TaskTemplatesSettings";
 import { ThemeModePicker } from "../components/settings/ThemeModePicker";
 import { ThemePackEditor } from "../components/ThemePackEditor";
 import {
@@ -516,6 +517,11 @@ function SettingsRouteView() {
         />
       </SettingsSection>
 
+      <TaskTemplatesSettings
+        templates={settings.taskTemplates}
+        onChange={(taskTemplates) => updateSettings({ taskTemplates })}
+      />
+
       <SettingsSection title="Sidebar organization">
         <SettingsRow
           title="Project order"
@@ -636,6 +642,15 @@ function SettingsRouteView() {
         </SettingsSection>
 
         <SettingsSection title="Code and status">
+          {renderBooleanSettingRow({
+            settingKey: "showEnvironmentTests",
+            title: "Tests",
+            description:
+              "Show per-task test scripts in the Environment panel. This is local command output, not GitHub PR checks.",
+            resetLabel: "tests section",
+            ariaLabel: "Show the Tests section in the Environment panel",
+          })}
+
           {renderBooleanSettingRow({
             settingKey: "showEnvironmentUsage",
             title: "Usage",

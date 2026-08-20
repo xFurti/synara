@@ -105,6 +105,7 @@ function shouldKeepBuiltInSlashCommandDespiteNativeCollision(
     // lineage (native session forking per provider), which a provider-native
     // "fork" text command cannot do.
     command === "fork" ||
+    command === "bakeoff" ||
     command === "goal" ||
     (providerUsesAppOwnedReviewSlashCommand(provider) && command === "review")
   );
@@ -124,6 +125,7 @@ export function shouldHideProviderNativeCommandFromComposerMenu(
     (normalizedCommand === "export" && appCommandIsAvailable) ||
     (normalizedCommand === "feedback" && appCommandIsAvailable) ||
     (normalizedCommand === "fork" && appCommandIsAvailable) ||
+    (normalizedCommand === "bakeoff" && appCommandIsAvailable) ||
     (normalizedCommand === "goal" && appCommandIsAvailable) ||
     (providerUsesAppOwnedReviewSlashCommand(provider) && normalizedCommand === "review")
   );
@@ -210,6 +212,12 @@ const COMPOSER_SLASH_COMMAND_DEFINITIONS: Record<
     command: "side",
     label: "/side",
     description: "Open a guarded Side from this thread, optionally on another provider",
+    source: "app",
+  },
+  bakeoff: {
+    command: "bakeoff",
+    label: "/bakeoff",
+    description: "Run this prompt on two providers in isolated worktrees",
     source: "app",
   },
   status: {
@@ -437,6 +445,7 @@ export function getAvailableComposerSlashCommands(input: {
   canOfferReviewCommand: boolean;
   canOfferForkCommand: boolean;
   canOfferSideCommand: boolean;
+  canOfferBakeoffCommand?: boolean;
   canOfferExportCommand: boolean;
   providerNativeCommandNames?: ReadonlyArray<string>;
 }): ComposerSlashCommand[] {
@@ -464,6 +473,7 @@ export function getAvailableComposerSlashCommands(input: {
           ...(input.canOfferReviewCommand ? (["review"] as const) : []),
           ...(input.canOfferForkCommand ? (["fork"] as const) : []),
           ...(input.canOfferSideCommand ? (["side"] as const) : []),
+          ...(input.canOfferBakeoffCommand ? (["bakeoff"] as const) : []),
           "status",
           "subagents",
           ...(input.canOfferExportCommand ? (["export"] as const) : []),
@@ -480,6 +490,7 @@ export function getAvailableComposerSlashCommands(input: {
           // happens in the app rather than being forwarded to Claude's native /export.
           ...(input.canOfferForkCommand ? (["fork"] as const) : []),
           ...(input.canOfferSideCommand ? (["side"] as const) : []),
+          ...(input.canOfferBakeoffCommand ? (["bakeoff"] as const) : []),
           ...(input.canOfferExportCommand ? (["export"] as const) : []),
           "goal",
           "debug",
@@ -557,6 +568,52 @@ export function parseSideSlashCommandArgs(
     return { targetProvider: null, prompt, unavailableProvider: matchedProvider };
   }
   return { targetProvider: matchedProvider, prompt, unavailableProvider: null };
+}
+
+export interface BakeoffSlashCommandArgs {
+  providers: ProviderKind[];
+  prompt: string;
+  unavailableProvider: ProviderKind | null;
+}
+
+// `/bakeoff [provider-a] [provider-b] [prompt]`
+export function parseBakeoffSlashCommandArgs(
+  args: string,
+  input: {
+    currentProvider: ProviderKind;
+    availableTargetProviders: ReadonlyArray<ProviderKind>;
+  },
+): BakeoffSlashCommandArgs {
+  const tokens = args
+    .trim()
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+  const providers: ProviderKind[] = [];
+  let consumed = 0;
+  for (const token of tokens) {
+    const matched = matchSideProviderToken(token);
+    if (!matched) {
+      break;
+    }
+    consumed += 1;
+    if (providers.includes(matched)) {
+      continue;
+    }
+    providers.push(matched);
+    if (providers.length === 2) {
+      break;
+    }
+  }
+  const prompt = tokens.slice(consumed).join(" ");
+  const unavailable = providers.find(
+    (provider) =>
+      provider !== input.currentProvider && !input.availableTargetProviders.includes(provider),
+  );
+  return {
+    providers,
+    prompt,
+    unavailableProvider: unavailable ?? null,
+  };
 }
 
 // `/fork` optionally accepts only an explicit target shorthand like `/fork local`.

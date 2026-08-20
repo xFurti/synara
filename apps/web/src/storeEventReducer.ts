@@ -933,6 +933,8 @@ function applyOrchestrationEvent(
               deepEqualJson(event.payload.lastKnownPr ?? null, thread.lastKnownPr ?? null)) &&
             (event.payload.handoff === undefined ||
               (event.payload.handoff ?? null) === (thread.handoff ?? null)) &&
+            (event.payload.bakeoff === undefined ||
+              deepEqualJson(event.payload.bakeoff ?? null, thread.bakeoff ?? null)) &&
             (event.payload.pinnedMessages === undefined ||
               deepEqualJson(event.payload.pinnedMessages, thread.pinnedMessages ?? null)) &&
             (event.payload.threadMarkers === undefined ||
@@ -982,6 +984,7 @@ function applyOrchestrationEvent(
               ? { lastKnownPr: event.payload.lastKnownPr }
               : {}),
             ...(event.payload.handoff !== undefined ? { handoff: event.payload.handoff } : {}),
+            ...(event.payload.bakeoff !== undefined ? { bakeoff: event.payload.bakeoff } : {}),
             ...(event.payload.pinnedMessages !== undefined
               ? {
                   pinnedMessages: event.payload.pinnedMessages as NonNullable<

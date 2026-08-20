@@ -175,6 +175,7 @@ export function threadShellsEqual(left: ThreadShell | undefined, right: ThreadSh
     (left.sidechatSourceThreadId ?? null) === (right.sidechatSourceThreadId ?? null) &&
     deepEqualJson(left.lastKnownPr ?? null, right.lastKnownPr ?? null) &&
     (left.handoff ?? null) === (right.handoff ?? null) &&
+    deepEqualJson(left.bakeoff ?? null, right.bakeoff ?? null) &&
     deepEqualJson(left.pinnedMessages ?? null, right.pinnedMessages ?? null) &&
     deepEqualJson(left.threadMarkers ?? null, right.threadMarkers ?? null) &&
     (left.notes ?? "") === (right.notes ?? "") &&
@@ -1536,6 +1537,10 @@ export function normalizeThreadFromReadModel(
     previous?.handoff && incoming.handoff && deepEqualJson(previous.handoff, incoming.handoff)
       ? previous.handoff
       : (incoming.handoff ?? null);
+  const bakeoff =
+    previous?.bakeoff && incoming.bakeoff && deepEqualJson(previous.bakeoff, incoming.bakeoff)
+      ? previous.bakeoff
+      : (incoming.bakeoff ?? null);
   const lastKnownPr =
     previous?.lastKnownPr &&
     incoming.lastKnownPr &&
@@ -1709,6 +1714,7 @@ export function normalizeThreadFromReadModel(
     sidechatSourceThreadId: incoming.sidechatSourceThreadId ?? null,
     lastKnownPr,
     handoff,
+    bakeoff,
     ...(pinnedMessages !== undefined ? { pinnedMessages } : {}),
     ...(threadMarkers !== undefined ? { threadMarkers } : {}),
     ...(notes !== undefined ? { notes } : {}),
@@ -1749,6 +1755,10 @@ export function normalizeThreadShellSnapshot(
     previous?.handoff && incoming.handoff && deepEqualJson(previous.handoff, incoming.handoff)
       ? previous.handoff
       : (incoming.handoff ?? null);
+  const bakeoff =
+    previous?.bakeoff && incoming.bakeoff && deepEqualJson(previous.bakeoff, incoming.bakeoff)
+      ? previous.bakeoff
+      : (incoming.bakeoff ?? null);
   const lastKnownPr =
     previous?.lastKnownPr &&
     incoming.lastKnownPr &&
@@ -1817,6 +1827,7 @@ export function normalizeThreadShellSnapshot(
     sidechatSourceThreadId: incoming.sidechatSourceThreadId ?? null,
     lastKnownPr,
     handoff,
+    bakeoff,
     // The sidebar shell snapshot/event does not carry detail-only annotations, so keep those
     // values instead of clobbering them with `undefined`. Goals are shell state and update here.
     ...(previous?.pinnedMessages !== undefined ? { pinnedMessages: previous.pinnedMessages } : {}),

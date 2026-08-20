@@ -17,6 +17,7 @@ import {
   ThreadPinnedMessages,
   ThreadMarkers,
   ThreadHandoff,
+  ThreadBakeoff,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -70,6 +71,9 @@ export const ProjectionThread = Schema.Struct({
   lastKnownPr: Schema.NullOr(OrchestrationThreadPullRequest),
   latestTurnId: Schema.NullOr(TurnId),
   handoff: Schema.NullOr(ThreadHandoff),
+  bakeoff: Schema.optional(Schema.NullOr(ThreadBakeoff)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   pinnedMessages: Schema.NullOr(ThreadPinnedMessages),
   threadMarkers: Schema.NullOr(ThreadMarkers),
   notes: Schema.NullOr(ThreadNotes),

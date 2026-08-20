@@ -17,6 +17,7 @@ import type {
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
   ThreadHandoff,
+  ThreadBakeoff,
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
@@ -265,6 +266,7 @@ export interface Thread extends ThreadWorkspaceState {
   forkSourceThreadId?: ThreadId | null;
   sidechatSourceThreadId?: ThreadId | null;
   handoff?: ThreadHandoff | null;
+  bakeoff?: ThreadBakeoff | null;
   lastKnownPr?: OrchestrationThreadPullRequest | null;
   latestUserMessageAt?: string | null;
   hasPendingApprovals?: boolean;
@@ -309,6 +311,7 @@ export interface ThreadShell extends ThreadWorkspaceState {
   forkSourceThreadId?: ThreadId | null;
   sidechatSourceThreadId?: ThreadId | null;
   handoff?: ThreadHandoff | null;
+  bakeoff?: ThreadBakeoff | null;
   lastKnownPr?: OrchestrationThreadPullRequest | null;
   latestUserMessageAt?: string | null;
   hasPendingApprovals?: boolean;
@@ -357,6 +360,7 @@ export interface SidebarThreadSummary {
   forkSourceThreadId?: ThreadId | null;
   sidechatSourceThreadId?: ThreadId | null;
   handoff?: ThreadHandoff | null;
+  bakeoff?: ThreadBakeoff | null;
   lastKnownPr?: OrchestrationThreadPullRequest | null;
 }
 

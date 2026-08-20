@@ -11,6 +11,12 @@ export const DEFAULT_APP_SNAP_SHORTCUT = {
   kind: "both-option-keys",
 } as const satisfies DesktopAppSnapShortcut;
 
+export const DEFAULT_WINDOWS_APP_SNAP_SHORTCUT = {
+  kind: "key-chord",
+  modifier: "option",
+  key: "KeyS",
+} as const satisfies DesktopAppSnapShortcut;
+
 export const APP_SNAP_SHORTCUT_MODIFIERS = [
   "command",
   "control",

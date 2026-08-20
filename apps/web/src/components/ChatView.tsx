@@ -611,6 +611,7 @@ import {
   resolveAvailableHandoffTargetProviders,
   resolveThreadHandoffBadgeLabel,
 } from "../lib/threadHandoff";
+import { canOfferBakeoff } from "../lib/threadBakeoff";
 import {
   resolveDiffEnvironmentState,
   resolveThreadEnvironmentMode,
@@ -3841,6 +3842,11 @@ export default function ChatView({
       selectedMentionCount: selectedComposerMentions.length,
       interactionMode,
     });
+  const canOfferBakeoffCommand = canOfferBakeoff({
+    isGitRepo: branchesQuery.data?.isRepo !== false,
+    thread: activeThread ?? null,
+    otherUsableProviderCount: 1,
+  });
   const canOfferSideCommand =
     isServerThread &&
     activeThread !== undefined &&
@@ -3877,6 +3883,7 @@ export default function ChatView({
     canOfferReviewCommand,
     canOfferForkCommand,
     canOfferSideCommand,
+    canOfferBakeoffCommand,
     canOfferExportCommand,
     dynamicAgents,
     threadMentionSources: {
@@ -10301,6 +10308,8 @@ export default function ChatView({
       activeThread?.session !== null &&
       activeThread?.session?.status !== "closed",
     canOfferSideCommand,
+    canOfferBakeoffCommand: canOfferBakeoffCommand && handoffTargetProviders.length > 0,
+    bakeoffTargetProviders: handoffTargetProviders,
     sidechatTargetProviders: handoffTargetProviders,
     canOfferExportCommand,
     supportsTextNativeReviewCommand,

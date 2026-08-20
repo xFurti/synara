@@ -16,6 +16,7 @@ import {
   parseFastSlashCommandAction,
   parseForkSlashCommandArgs,
   parseGoalSlashCommandArgs,
+  parseBakeoffSlashCommandArgs,
   parseSideSlashCommandArgs,
   providerSupportsTextNativeReviewCommand,
   shouldHideProviderNativeCommandFromComposerMenu,
@@ -30,6 +31,7 @@ describe("composerSlashCommands", () => {
     expect(isBuiltInComposerSlashCommand("feedback")).toBe(true);
     expect(isBuiltInComposerSlashCommand("debug")).toBe(true);
     expect(isBuiltInComposerSlashCommand("goal")).toBe(true);
+    expect(isBuiltInComposerSlashCommand("bakeoff")).toBe(true);
     expect(isBuiltInComposerSlashCommand("unknown")).toBe(false);
   });
 
@@ -207,6 +209,28 @@ describe("composerSlashCommands", () => {
       targetProvider: null,
       prompt: "compare this",
       unavailableProvider: "grok",
+    });
+  });
+
+  it("parses /bakeoff provider tokens and the remaining prompt", () => {
+    const context = {
+      currentProvider: "codex" as const,
+      availableTargetProviders: ["claudeAgent", "grok"] as const,
+    };
+    expect(parseBakeoffSlashCommandArgs("claude implement X", context)).toEqual({
+      providers: ["claudeAgent"],
+      prompt: "implement X",
+      unavailableProvider: null,
+    });
+    expect(parseBakeoffSlashCommandArgs("codex claude implement X", context)).toEqual({
+      providers: ["codex", "claudeAgent"],
+      prompt: "implement X",
+      unavailableProvider: null,
+    });
+    expect(parseBakeoffSlashCommandArgs("cursor do it", context)).toEqual({
+      providers: ["cursor"],
+      prompt: "do it",
+      unavailableProvider: "cursor",
     });
   });
 

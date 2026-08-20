@@ -37,7 +37,7 @@ import { SettingsCard, SettingsRow, SettingsSection } from "./SettingsPanelPrimi
 
 function appSnapStatusText(state: DesktopAppSnapState | null): string {
   if (!state) return "Available in the Synara desktop app";
-  if (!state.supported) return state.message ?? "Available on macOS only";
+  if (!state.supported) return state.message ?? "Available on macOS and Windows";
   if (state.status === "ready") {
     const shortcut = state.shortcut;
     const label = shortcut ? appSnapShortcutLabels(shortcut).join(" + ") : "the shortcut";
@@ -266,7 +266,7 @@ export function AppSnapSettingsPanel({
       toastManager.add({
         type: "warning",
         title: "AppSnap unavailable",
-        description: "AppSnap requires the Synara desktop app on macOS.",
+        description: "AppSnap requires the Synara desktop app on macOS or Windows.",
       });
       return;
     }
@@ -343,8 +343,9 @@ export function AppSnapSettingsPanel({
           {!supported ? (
             <p className={cn(SETTINGS_CARD_ROW_DESCRIPTION_CLASS_NAME, "pt-0.5")}>
               {appSnapState
-                ? (appSnapState.message ?? "AppSnap is available only in the macOS desktop app.")
-                : "AppSnap requires the Synara desktop app on macOS."}
+                ? (appSnapState.message ??
+                  "AppSnap is available in the macOS and Windows desktop apps.")
+                : "AppSnap requires the Synara desktop app on macOS or Windows."}
             </p>
           ) : null}
         </div>
@@ -375,7 +376,7 @@ export function AppSnapSettingsPanel({
 
         <SettingsRow
           title="Shortcut"
-          description="Choose exactly two keys: one modifier and one other key. Synara checks its own bindings and asks macOS whether another app already owns the shortcut before saving it."
+          description="Choose exactly two keys: one modifier and one other key. Both Option keys work on macOS; Windows uses a modifier plus a key (Alt+S by default)."
           control={
             <AppSnapShortcutControl
               key={
@@ -429,7 +430,7 @@ export function AppSnapSettingsPanel({
         />
       </SettingsSection>
 
-      {supported ? (
+      {supported && appSnapState?.platform === "macos" ? (
         <SettingsSection title="macOS permissions">
           <SettingsRow
             title="Input Monitoring"

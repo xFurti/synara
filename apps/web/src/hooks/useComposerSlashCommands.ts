@@ -25,6 +25,7 @@ import {
   hasProviderNativeSlashCommand,
   parseComposerSlashInvocationForCommands,
   parseFastSlashCommandAction,
+  parseBakeoffSlashCommandArgs,
   parseForkSlashCommandArgs,
   parseGoalSlashCommandArgs,
   parseSideSlashCommandArgs,
@@ -52,6 +53,7 @@ import {
   sendSidechatPrompt,
   type SidechatCreationFlight,
 } from "../lib/sidechatCreation";
+import { useThreadBakeoff } from "./useThreadBakeoff";
 
 type ComposerSnapshot = {
   value: string;
@@ -73,6 +75,8 @@ export function useComposerSlashCommands(input: {
   supportsFastSlashCommand: boolean;
   canOfferCompactCommand: boolean;
   canOfferSideCommand: boolean;
+  canOfferBakeoffCommand?: boolean;
+  bakeoffTargetProviders?: ReadonlyArray<ProviderKind>;
   sidechatTargetProviders: ReadonlyArray<ProviderKind>;
   canOfferExportCommand: boolean;
   supportsTextNativeReviewCommand: boolean;
@@ -117,6 +121,7 @@ export function useComposerSlashCommands(input: {
 }) {
   const [isSlashStatusDialogOpen, setIsSlashStatusDialogOpen] = useState(false);
   const openGlobalFeedbackDialog = useFeedbackDialogStore((state) => state.openDialog);
+  const { startBakeoff } = useThreadBakeoff();
   const {
     activeProject,
     activeThread,
@@ -125,6 +130,8 @@ export function useComposerSlashCommands(input: {
     supportsFastSlashCommand,
     canOfferCompactCommand,
     canOfferSideCommand,
+    canOfferBakeoffCommand = false,
+    bakeoffTargetProviders = [],
     sidechatTargetProviders,
     canOfferExportCommand,
     supportsTextNativeReviewCommand,
@@ -155,6 +162,7 @@ export function useComposerSlashCommands(input: {
     canOfferReviewCommand: true,
     canOfferForkCommand: true,
     canOfferSideCommand: true,
+    canOfferBakeoffCommand,
     canOfferExportCommand,
     providerNativeCommandNames,
   });
@@ -962,16 +970,56 @@ export function useComposerSlashCommands(input: {
         }
         return true;
       }
+      if (slashInvocation.command === "bakeoff") {
+        if (!canOfferBakeoffCommand || !activeProject) {
+          toastManager.add({
+            type: "warning",
+            title: "Bake-off is unavailable",
+            description: "Use /bakeoff from a Git project with another provider signed in.",
+          });
+          return true;
+        }
+        const parsed = parseBakeoffSlashCommandArgs(slashInvocation.args, {
+          currentProvider: selectedModelSelection.provider,
+          availableTargetProviders: bakeoffTargetProviders,
+        });
+        const lastUserMessage = [...(activeThread?.messages ?? [])]
+          .reverse()
+          .find((message) => message.role === "user" && message.text.trim().length > 0);
+        const prompt =
+          parsed.prompt.trim() || activeThread?.goal?.trim() || lastUserMessage?.text.trim() || "";
+        editorActions.clearComposerSlashDraft();
+        await startBakeoff({
+          project: activeProject,
+          sourceThread: activeThread,
+          currentProvider: selectedModelSelection.provider,
+          requestedProviders: parsed.providers,
+          usableProviders: [selectedModelSelection.provider, ...bakeoffTargetProviders].filter(
+            (provider, index, all) => all.indexOf(provider) === index,
+          ),
+          prompt,
+          baseRef: activeRootBranch,
+          copyChangesFrom:
+            (activeThread?.envMode ?? environmentMode) === "local" ? activeProject.cwd : null,
+        });
+        return true;
+      }
       return false;
     },
     [
       availableBuiltInSlashCommands,
+      activeProject,
+      activeRootBranch,
+      activeThread,
+      bakeoffTargetProviders,
+      canOfferBakeoffCommand,
       canOfferSideCommand,
       checkClaudeFastSlashCommandAvailability,
       compactProviderThread,
       createForkThreadFromSlashCommand,
       createSidechatFromSlashCommand,
       editorActions,
+      environmentMode,
       handleClearConversation,
       handleInteractionModeChange,
       openForkTargetPicker,
@@ -985,6 +1033,7 @@ export function useComposerSlashCommands(input: {
       runExportSlashCommand,
       runFastSlashCommand,
       runGoalSlashCommand,
+      startBakeoff,
     ],
   );
 

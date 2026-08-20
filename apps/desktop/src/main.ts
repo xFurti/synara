@@ -1718,6 +1718,12 @@ function resolveNotificationIconPath(): string | null {
 }
 
 function resolveAppSnapHelperPath(): string {
+  if (process.platform === "win32") {
+    if (app.isPackaged) {
+      return Path.resolve(process.resourcesPath, "..", "Helpers", "synara-appsnap-helper.mjs");
+    }
+    return Path.resolve(__dirname, "..", "native", "appsnap-windows", "synara-appsnap-helper.mjs");
+  }
   if (app.isPackaged) {
     return Path.resolve(process.resourcesPath, "..", "Helpers", "synara-appsnap-helper");
   }

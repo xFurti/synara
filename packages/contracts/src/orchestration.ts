@@ -249,6 +249,7 @@ export const ThreadCreationSource = Schema.Literals([
   "external_mcp",
   "provider_native",
   "automation_run",
+  "bakeoff",
 ]);
 export type ThreadCreationSource = typeof ThreadCreationSource.Type;
 export const ProviderReviewTarget = Schema.Union([
@@ -518,6 +519,20 @@ export const ThreadHandoff = Schema.Struct({
   bootstrapStatus: ThreadHandoffBootstrapStatus,
 });
 export type ThreadHandoff = typeof ThreadHandoff.Type;
+
+export const ThreadBakeoffStatus = Schema.Literals(["running", "kept", "discarded", "failed"]);
+export type ThreadBakeoffStatus = typeof ThreadBakeoffStatus.Type;
+
+export const ThreadBakeoff = Schema.Struct({
+  experimentId: TrimmedNonEmptyString,
+  peerThreadId: ThreadId,
+  sourceThreadId: Schema.NullOr(ThreadId),
+  prompt: Schema.String,
+  baseRef: TrimmedNonEmptyString,
+  role: Schema.Literals(["left", "right"]),
+  status: ThreadBakeoffStatus,
+});
+export type ThreadBakeoff = typeof ThreadBakeoff.Type;
 
 export const OrchestrationProposedPlanId = TrimmedNonEmptyString;
 export type OrchestrationProposedPlanId = typeof OrchestrationProposedPlanId.Type;
@@ -839,6 +854,9 @@ export const OrchestrationThread = Schema.Struct({
   ),
   deletedAt: Schema.NullOr(IsoDateTime),
   handoff: Schema.NullOr(ThreadHandoff).pipe(Schema.withDecodingDefault(() => null)),
+  bakeoff: Schema.optional(Schema.NullOr(ThreadBakeoff)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   pinnedMessages: Schema.optional(ThreadPinnedMessages),
   threadMarkers: Schema.optional(ThreadMarkers),
   notes: Schema.optional(ThreadNotes),
@@ -928,6 +946,9 @@ export const OrchestrationThreadShell = Schema.Struct({
     Schema.withDecodingDefault(() => null),
   ),
   handoff: Schema.NullOr(ThreadHandoff).pipe(Schema.withDecodingDefault(() => null)),
+  bakeoff: Schema.optional(Schema.NullOr(ThreadBakeoff)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   goal: Schema.optional(ThreadGoal),
   ...ThreadGoalTimingFields,
   session: Schema.NullOr(OrchestrationSession),
@@ -1132,6 +1153,7 @@ const ThreadCreateCommand = Schema.Struct({
   lastKnownPr: Schema.optional(Schema.NullOr(OrchestrationThreadPullRequest)).pipe(
     Schema.withDecodingDefault(() => null),
   ),
+  bakeoff: Schema.optional(Schema.NullOr(ThreadBakeoff)),
   createdAt: IsoDateTime,
 });
 
@@ -1238,6 +1260,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   subagentNickname: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   subagentRole: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   handoff: Schema.optional(Schema.NullOr(ThreadHandoff)),
+  bakeoff: Schema.optional(Schema.NullOr(ThreadBakeoff)),
   lastKnownPr: Schema.optional(Schema.NullOr(OrchestrationThreadPullRequest)),
   pinnedMessages: Schema.optional(ThreadPinnedMessages),
   threadMarkers: Schema.optional(ThreadMarkers),
@@ -1858,6 +1881,9 @@ export const ThreadCreatedPayload = Schema.Struct({
     Schema.withDecodingDefault(() => null),
   ),
   handoff: Schema.NullOr(ThreadHandoff).pipe(Schema.withDecodingDefault(() => null)),
+  bakeoff: Schema.optional(Schema.NullOr(ThreadBakeoff)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -1901,6 +1927,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   subagentNickname: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   subagentRole: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   handoff: Schema.optional(Schema.NullOr(ThreadHandoff)),
+  bakeoff: Schema.optional(Schema.NullOr(ThreadBakeoff)),
   lastKnownPr: Schema.optional(Schema.NullOr(OrchestrationThreadPullRequest)),
   pinnedMessages: Schema.optional(ThreadPinnedMessages),
   threadMarkers: Schema.optional(ThreadMarkers),

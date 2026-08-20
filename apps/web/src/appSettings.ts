@@ -19,6 +19,11 @@ import {
   type ServerSettingsPatch,
 } from "@synara/contracts";
 import {
+  BUILT_IN_TASK_TEMPLATES,
+  TASK_TEMPLATE_MAX_COUNT,
+  TaskTemplate,
+} from "./lib/taskTemplates";
+import {
   getDefaultModel,
   getModelOptions,
   normalizeModelSlug,
@@ -244,6 +249,10 @@ export const AppSettingsSchema = Schema.Struct({
   showEnvironmentMarkers: Schema.Boolean.pipe(withDefaults(() => false)),
   showEnvironmentInstructions: Schema.Boolean.pipe(withDefaults(() => false)),
   showEnvironmentNotepad: Schema.Boolean.pipe(withDefaults(() => false)),
+  showEnvironmentTests: Schema.Boolean.pipe(withDefaults(() => true)),
+  taskTemplates: Schema.Array(TaskTemplate)
+    .check(Schema.isMaxLength(TASK_TEMPLATE_MAX_COUNT))
+    .pipe(withDefaults(() => [...BUILT_IN_TASK_TEMPLATES])),
   followUpBehavior: FollowUpBehavior.pipe(withDefaults(() => DEFAULT_FOLLOW_UP_BEHAVIOR)),
   enableAssistantStreaming: Schema.Boolean.pipe(withDefaults(() => true)),
   enableProviderUpdateChecks: Schema.Boolean.pipe(withDefaults(() => true)),

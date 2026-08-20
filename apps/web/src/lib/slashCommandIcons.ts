@@ -36,6 +36,7 @@ export const SLASH_COMMAND_ICONS: Record<string, LucideIcon> = {
   review: BugIcon,
   fork: GitForkIcon,
   side: TemporaryThreadIcon,
+  bakeoff: GitForkIcon,
   status: InfoIcon,
   subagents: BotIcon,
   feedback: BugIcon,

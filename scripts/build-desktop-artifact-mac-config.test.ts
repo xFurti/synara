@@ -97,7 +97,12 @@ describe("createDesktopPlatformBuildConfig", () => {
     });
 
     assert.equal(win.mac, undefined);
-    assert.equal(win.extraFiles, undefined);
+    assert.deepStrictEqual(win.extraFiles, [
+      {
+        from: "apps/desktop/native/appsnap-windows/synara-appsnap-helper.mjs",
+        to: "Helpers/synara-appsnap-helper.mjs",
+      },
+    ]);
     assert.deepStrictEqual(win.asarUnpack, ["node_modules/node-pty/**"]);
     assert.equal(WINDOWS_INSTALLER_GUID, "368107a8-afe6-5db5-ab3b-d4f331684868");
     assert.deepStrictEqual(win.nsis, {

@@ -47,6 +47,13 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
       "Pick the default workspace mode for newly created draft threads. local worktree environment",
   },
   {
+    id: "general:task-templates",
+    section: "general",
+    title: "Task templates",
+    keywords: "bugfix review spike preset prompt skeleton new thread template",
+    target: "task-templates",
+  },
+  {
     id: "general:project-order",
     section: "general",
     title: "Project order",
@@ -85,6 +92,13 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
     title: "Open by default",
     keywords:
       "Open the chat Environment panel automatically on normal threads. default closed open environment panel preference",
+  },
+  {
+    id: "general:environment-tests",
+    section: "general",
+    title: "Tests",
+    keywords:
+      "Show per-task test scripts in the Environment panel. vitest jest pytest bun run test local",
   },
   {
     id: "general:environment-usage",

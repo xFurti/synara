@@ -860,6 +860,16 @@ describe("AppSettingsSchema", () => {
     ).toBe(true);
   });
 
+  it("seeds built-in task templates unless the user cleared them", () => {
+    const decode = Schema.decodeSync(Schema.fromJsonString(AppSettingsSchema));
+    expect(decode("{}").taskTemplates.map((template) => template.id)).toEqual([
+      "bugfix",
+      "review",
+      "spike",
+    ]);
+    expect(decode(JSON.stringify({ taskTemplates: [] })).taskTemplates).toEqual([]);
+  });
+
   it("fills decoding defaults for persisted settings that predate newer keys", () => {
     const decode = Schema.decodeSync(Schema.fromJsonString(AppSettingsSchema));
 

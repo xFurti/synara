@@ -106,6 +106,7 @@ function toThreadShell(thread: Thread): ThreadShell {
     sidechatSourceThreadId: thread.sidechatSourceThreadId ?? null,
     lastKnownPr: thread.lastKnownPr ?? null,
     handoff: thread.handoff ?? null,
+    bakeoff: thread.bakeoff ?? null,
     ...(thread.pinnedMessages !== undefined ? { pinnedMessages: thread.pinnedMessages } : {}),
     ...(thread.threadMarkers !== undefined ? { threadMarkers: thread.threadMarkers } : {}),
     ...(thread.notes !== undefined ? { notes: thread.notes } : {}),
@@ -354,7 +355,8 @@ function sidebarThreadSummariesEqual(
     (left.forkSourceThreadId ?? null) === (right.forkSourceThreadId ?? null) &&
     (left.sidechatSourceThreadId ?? null) === (right.sidechatSourceThreadId ?? null) &&
     deepEqualJson(left.lastKnownPr ?? null, right.lastKnownPr ?? null) &&
-    (left.handoff ?? null) === (right.handoff ?? null)
+    (left.handoff ?? null) === (right.handoff ?? null) &&
+    deepEqualJson(left.bakeoff ?? null, right.bakeoff ?? null)
   );
 }
 
@@ -398,6 +400,7 @@ function buildSidebarThreadSummary(
     sidechatSourceThreadId: thread.sidechatSourceThreadId ?? null,
     lastKnownPr: thread.lastKnownPr ?? null,
     handoff: thread.handoff ?? null,
+    bakeoff: thread.bakeoff ?? null,
   };
   if (previous && sidebarThreadSummariesEqual(previous, nextSummary)) {
     return previous;

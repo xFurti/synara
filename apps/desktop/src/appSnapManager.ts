@@ -24,6 +24,7 @@ import {
 } from "@synara/contracts";
 import {
   DEFAULT_APP_SNAP_SHORTCUT,
+  DEFAULT_WINDOWS_APP_SNAP_SHORTCUT,
   appSnapShortcutAccelerator,
   appSnapShortcutSystemConflict,
   isAppSnapShortcut,
@@ -374,18 +375,26 @@ export class DesktopAppSnapManager {
       spawn: options.spawn ?? ChildProcess.spawn,
     };
     this.#platform = desktopAppSnapPlatform(options.platform);
-    this.#status = this.#platform === "macos" ? "disabled" : "unsupported";
-    this.#message =
-      this.#platform === "macos" ? null : "AppSnap is available only in the macOS desktop app.";
+    this.#status = this.#isSupported() ? "disabled" : "unsupported";
+    this.#message = this.#isSupported()
+      ? null
+      : "AppSnap is available in the macOS and Windows desktop apps.";
+    if (this.#platform === "windows" && this.#shortcut.kind === "both-option-keys") {
+      this.#shortcut = DEFAULT_WINDOWS_APP_SNAP_SHORTCUT;
+    }
+  }
+
+  #isSupported(): boolean {
+    return this.#platform === "macos" || this.#platform === "windows";
   }
 
   getState(): DesktopAppSnapState {
     return {
       platform: this.#platform,
-      supported: this.#platform === "macos",
+      supported: this.#isSupported(),
       enabled: this.#enabled,
       status: this.#status,
-      shortcut: this.#platform === "macos" ? this.#shortcut : null,
+      shortcut: this.#isSupported() ? this.#shortcut : null,
       inputMonitoringPermission: this.#inputMonitoringPermission,
       screenRecordingPermission: this.#screenRecordingPermission,
       message: this.#message,
@@ -393,14 +402,17 @@ export class DesktopAppSnapManager {
   }
 
   async refreshState(): Promise<DesktopAppSnapState> {
-    if (this.#platform !== "macos" || this.#disposed) return this.getState();
+    if (!this.#isSupported() || this.#disposed) return this.getState();
     if (!(await this.#runPermissionCommand("--check-permissions"))) return this.getState();
     await this.#reconcileWatchProcess();
     return this.getState();
   }
 
   async setEnabled(enabled: boolean): Promise<DesktopAppSnapState> {
-    if (this.#platform !== "macos" || this.#disposed) return this.getState();
+    if (!this.#isSupported() || this.#disposed) return this.getState();
+    if (this.#platform === "windows" && this.#shortcut.kind === "both-option-keys") {
+      this.#shortcut = DEFAULT_WINDOWS_APP_SNAP_SHORTCUT;
+    }
     this.#enabled = enabled;
     if (!enabled) {
       this.#stopWatchProcess();
@@ -414,8 +426,8 @@ export class DesktopAppSnapManager {
   }
 
   checkShortcut(shortcut: unknown): DesktopAppSnapShortcutAvailability {
-    if (this.#platform !== "macos") {
-      return { available: false, reason: "AppSnap shortcuts are available only on macOS." };
+    if (!this.#isSupported()) {
+      return { available: false, reason: "AppSnap shortcuts are available on macOS and Windows." };
     }
     if (!isAppSnapShortcut(shortcut)) {
       return {
@@ -424,6 +436,12 @@ export class DesktopAppSnapManager {
       };
     }
     if (shortcut.kind === "both-option-keys") {
+      if (this.#platform === "windows") {
+        return {
+          available: false,
+          reason: "Both Option keys are macOS-only. Pick a modifier plus a key on Windows.",
+        };
+      }
       return { available: true, reason: null };
     }
     const systemConflict = appSnapShortcutSystemConflict(shortcut);
@@ -443,13 +461,13 @@ export class DesktopAppSnapManager {
       if (!registry.register(accelerator, () => undefined)) {
         return {
           available: false,
-          reason: "macOS or another app is already using this shortcut.",
+          reason: "Another app is already using this shortcut.",
         };
       }
       registry.unregister(accelerator);
       return { available: true, reason: null };
     } catch {
-      return { available: false, reason: "macOS could not register this shortcut." };
+      return { available: false, reason: "The shortcut could not be registered." };
     }
   }
 
@@ -461,7 +479,7 @@ export class DesktopAppSnapManager {
   async setShortcut(shortcut: unknown): Promise<DesktopAppSnapShortcutUpdateResult> {
     const availability = this.checkShortcut(shortcut);
     if (
-      this.#platform !== "macos" ||
+      !this.#isSupported() ||
       !isAppSnapShortcut(shortcut) ||
       sameAppSnapShortcut(this.#shortcut, shortcut)
     ) {
@@ -477,7 +495,7 @@ export class DesktopAppSnapManager {
   }
 
   async requestPermissions(): Promise<DesktopAppSnapState> {
-    if (this.#platform !== "macos" || this.#disposed) return this.getState();
+    if (!this.#isSupported() || this.#disposed) return this.getState();
     if (!(await this.#runPermissionCommand("--request-permissions"))) return this.getState();
     await this.#reconcileWatchProcess();
     return this.getState();
@@ -710,7 +728,7 @@ export class DesktopAppSnapManager {
   }
 
   async #reconcileWatchProcessOnce(): Promise<void> {
-    if (this.#disposed || this.#platform !== "macos") return;
+    if (this.#disposed || !this.#isSupported()) return;
     if (!this.#enabled) {
       this.#stopWatchProcess();
       this.#releaseShortcutReservation();
@@ -770,9 +788,11 @@ export class DesktopAppSnapManager {
     this.#setState("starting", null);
     // Key chords are detected by Electron's reserved accelerator; the helper
     // only captures on demand, driven by "trigger" lines on its stdin.
-    const shortcutArguments = this.#shortcut.kind === "key-chord" ? ["--external-trigger"] : [];
-    const child = this.#options.spawn(
-      this.#options.helperPath,
+    const shortcutArguments =
+      this.#platform === "windows" || this.#shortcut.kind === "key-chord"
+        ? ["--external-trigger"]
+        : [];
+    const child = this.#spawnHelper(
       [
         "--watch",
         "--output-dir",
@@ -781,7 +801,7 @@ export class DesktopAppSnapManager {
         this.#options.excludedBundleId,
         ...shortcutArguments,
       ],
-      { stdio: ["pipe", "pipe", "pipe"] },
+      ["pipe", "pipe", "pipe"],
     );
     // A helper that dies mid-write must not surface as an unhandled stream error.
     child.stdin?.on("error", () => undefined);
@@ -810,6 +830,20 @@ export class DesktopAppSnapManager {
       this.#setState("error", message);
       this.#emitCaptureError("helper-stopped", message, undefined, false);
     });
+  }
+
+  #spawnHelper(
+    args: string[],
+    stdio: ["pipe", "pipe", "pipe"] | ["ignore", "pipe", "pipe"],
+  ): AppSnapHelperProcess {
+    const helperPath = this.#options.helperPath;
+    if (helperPath.endsWith(".mjs") || helperPath.endsWith(".js")) {
+      return this.#options.spawn(process.execPath, [helperPath, ...args], {
+        stdio,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      }) as AppSnapHelperProcess;
+    }
+    return this.#options.spawn(helperPath, args, { stdio }) as AppSnapHelperProcess;
   }
 
   #stopWatchProcess(): void {
@@ -894,7 +928,7 @@ export class DesktopAppSnapManager {
   async #executePermissionCommand(
     command: "--check-permissions" | "--request-permissions",
   ): Promise<boolean> {
-    if (this.#disposed || this.#platform !== "macos") return false;
+    if (this.#disposed || !this.#isSupported()) return false;
     if (!FS.existsSync(this.#options.helperPath)) {
       this.#setState("error", "The AppSnap native helper is missing from this desktop build.");
       return false;
@@ -903,9 +937,7 @@ export class DesktopAppSnapManager {
     return await new Promise<boolean>((resolve) => {
       let child: AppSnapHelperProcess;
       try {
-        child = this.#options.spawn(this.#options.helperPath, [command], {
-          stdio: ["ignore", "pipe", "pipe"],
-        });
+        child = this.#spawnHelper([command], ["ignore", "pipe", "pipe"]);
       } catch (error) {
         this.#setState(
           "error",

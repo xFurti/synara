@@ -39,11 +39,11 @@ async function flushPromises(): Promise<void> {
 }
 
 describe("desktop AppSnap platform state", () => {
-  it("exposes an explicit unsupported state outside macOS", async () => {
+  it("treats Windows as a supported AppSnap platform", async () => {
     const onState = vi.fn();
     const manager = new DesktopAppSnapManager({
       platform: "win32",
-      helperPath: "C:\\missing\\synara-appsnap-helper.exe",
+      helperPath: "C:\\missing\\synara-appsnap-helper.mjs",
       captureDirectory: "C:\\tmp\\appsnap",
       excludedBundleId: SYNARA_DEVELOPMENT_BUNDLE_ID,
       onState,
@@ -53,8 +53,33 @@ describe("desktop AppSnap platform state", () => {
 
     expect(desktopAppSnapPlatform("darwin")).toBe("macos");
     expect(desktopAppSnapPlatform("linux")).toBe("linux");
+    expect(manager.getState()).toMatchObject({
+      platform: "windows",
+      supported: true,
+      status: "disabled",
+    });
     expect(await manager.setEnabled(true)).toMatchObject({
       platform: "windows",
+      supported: true,
+      status: "error",
+    });
+    expect(onState).toHaveBeenCalled();
+  });
+
+  it("exposes an explicit unsupported state on Linux", async () => {
+    const onState = vi.fn();
+    const manager = new DesktopAppSnapManager({
+      platform: "linux",
+      helperPath: "/tmp/missing-appsnap-helper",
+      captureDirectory: "/tmp/synara-appsnap-test",
+      excludedBundleId: SYNARA_DEVELOPMENT_BUNDLE_ID,
+      onState,
+      onCaptured: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    expect(await manager.setEnabled(true)).toMatchObject({
+      platform: "linux",
       supported: false,
       enabled: false,
       status: "unsupported",
@@ -121,7 +146,7 @@ describe("AppSnap shortcut availability", () => {
 
     expect(manager.checkShortcut({ kind: "key-chord", modifier: "option", key: "KeyS" })).toEqual({
       available: false,
-      reason: "macOS or another app is already using this shortcut.",
+      reason: "Another app is already using this shortcut.",
     });
     // Universal in-app chords never reach the registry probe: reserving them
     // would hijack the action (Copy, Spotlight, …) in every foreground app.

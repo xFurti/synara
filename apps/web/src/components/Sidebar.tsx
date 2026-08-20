@@ -7,6 +7,7 @@ import {
   ArchiveIcon,
   BookIcon,
   ChatBubbleIcon,
+  ChevronDownIcon,
   CircleQuestionIcon,
   ClockIcon,
   CopyIcon,
@@ -111,6 +112,8 @@ import {
 import { isOrdinarySpaceProject } from "../lib/spaces";
 import { expandProjectHomePath, joinProjectPath } from "../lib/projectPaths";
 import { reconcileDeletedThreadsFromClient } from "../lib/deletedThreadClientReconciliation";
+import { applyTaskTemplate, type TaskTemplate } from "../lib/taskTemplates";
+import { SETTINGS_TARGETS } from "../settingsNavigation";
 import { deleteProjectFromClient } from "../lib/projectDelete";
 import { persistAppStateNow, useStore } from "../store";
 import { getThreadFromState } from "../threadDerivation";
@@ -2715,6 +2718,39 @@ export default function Sidebar() {
     threadsHydrated,
   ]);
 
+  const handleNewThreadFromTemplate = useCallback(
+    (template: TaskTemplate, projectId?: ProjectId) => {
+      const targetProjectId = projectId ?? primaryNewThreadTarget?.projectId;
+      if (!targetProjectId) {
+        if (!threadsHydrated) return;
+        handleStartAddProject();
+        return;
+      }
+      prefetchModelsForProjectNewThread(targetProjectId, { includeDroid: true });
+      void handleNewThread(targetProjectId, {
+        fresh: true,
+        ...(template.provider ? { provider: template.provider } : {}),
+        envMode:
+          template.envMode ??
+          resolveSidebarNewThreadEnvMode({
+            defaultEnvMode: appSettings.defaultThreadEnvMode,
+          }),
+      }).then((threadId) => {
+        if (threadId) {
+          applyTaskTemplate(threadId, template, useComposerDraftStore.getState());
+        }
+      });
+    },
+    [
+      appSettings.defaultThreadEnvMode,
+      handleNewThread,
+      handleStartAddProject,
+      prefetchModelsForProjectNewThread,
+      primaryNewThreadTarget,
+      threadsHydrated,
+    ],
+  );
+
   const handleImportThread = useCallback(
     async (provider: ImportProviderKind, externalId: string) => {
       const api = readNativeApi();
@@ -4946,6 +4982,44 @@ export default function Sidebar() {
                   });
                 }}
               />
+              {appSettings.taskTemplates.length > 0 ? (
+                <Menu>
+                  <SidebarIconButton
+                    render={<MenuTrigger />}
+                    icon={ChevronDownIcon}
+                    label={`Start from a template in ${project.name}`}
+                    tooltip="Start from template"
+                    tooltipSide="top"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                  />
+                  <ComposerPickerMenuPopup align="end" side="bottom" className="min-w-44">
+                    {appSettings.taskTemplates.map((template) => (
+                      <MenuItem
+                        key={template.id}
+                        className="min-h-7 py-1 sm:text-xs"
+                        onClick={() => handleNewThreadFromTemplate(template, project.id)}
+                      >
+                        {template.name}
+                      </MenuItem>
+                    ))}
+                    <MenuSeparator />
+                    <MenuItem
+                      className="min-h-7 py-1 sm:text-xs"
+                      onClick={() => {
+                        void navigate({
+                          to: "/settings",
+                          search: { section: "general", target: SETTINGS_TARGETS.taskTemplates },
+                        });
+                      }}
+                    >
+                      Manage templates…
+                    </MenuItem>
+                  </ComposerPickerMenuPopup>
+                </Menu>
+              ) : null}
             </SidebarSectionToolbar>
           </PreviewCardTrigger>
           {renderProjectHoverCardPopup(project, allProjectThreadCount)}
@@ -5431,14 +5505,23 @@ export default function Sidebar() {
         keywords: ["thread", "new", "project"],
         shortcutLabel: newThreadShortcutLabel,
       },
+      ...appSettings.taskTemplates.map(
+        (template): SidebarSearchAction => ({
+          id: `new-thread-template:${template.id}`,
+          label: `New thread: ${template.name}`,
+          description: "Start a fresh thread from this task template.",
+          keywords: ["thread", "new", "template", template.name, template.id],
+          run: () => handleNewThreadFromTemplate(template),
+        }),
+      ),
       {
         id: "copy-task-link",
         label: "Copy task link",
         description: "Copy a local URL that opens the focused task in this Synara.",
         keywords: ["copy", "link", "url", "task", "thread"],
-        run: visualActiveSidebarThreadId
-          ? () => copyThreadLinkToClipboard(visualActiveSidebarThreadId)
-          : undefined,
+        ...(visualActiveSidebarThreadId
+          ? { run: () => copyThreadLinkToClipboard(visualActiveSidebarThreadId) }
+          : {}),
       },
       {
         id: "add-project",
@@ -5527,7 +5610,9 @@ export default function Sidebar() {
     ],
     [
       addProjectShortcutLabel,
+      appSettings.taskTemplates,
       copyThreadLinkToClipboard,
+      handleNewThreadFromTemplate,
       handleSelectSpace,
       handleStartAddProject,
       importThreadShortcutLabel,

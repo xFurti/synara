@@ -78,6 +78,7 @@ import {
   CHAT_MAIN_VIEWPORT_SHELL_CLASS_NAME,
 } from "./composerPickerStyles";
 import { routeSplitBrowserPanelOpenRequest } from "./browserPanelOpenRequest";
+import { BakeoffSplitBanner, openBakeoffDiffs } from "./BakeoffSplitBanner";
 import { cn } from "~/lib/utils";
 
 const SPLIT_PANE_PANEL_DEFAULT_WIDTH_PX = 22 * 16;
@@ -993,14 +994,30 @@ export function SplitChatSurface(props: { splitViewId: SplitViewId; routeThreadI
   return (
     <>
       <div
-        className={cn(CHAT_MAIN_VIEWPORT_SHELL_CLASS_NAME, CHAT_MAIN_CONTENT_SURFACE_CLASS_NAME)}
+        className={cn(
+          CHAT_MAIN_VIEWPORT_SHELL_CLASS_NAME,
+          CHAT_MAIN_CONTENT_SURFACE_CLASS_NAME,
+          "flex flex-col",
+        )}
       >
-        <PaneRenderer
-          pane={activeSplitView.root}
+        <BakeoffSplitBanner
           splitView={activeSplitView}
-          renderLeaf={renderLeaf}
-          onSetRatio={handleSetRatio}
+          onOpenDiffs={(filePath) =>
+            openBakeoffDiffs({
+              splitView: activeSplitView,
+              filePath,
+              setPanePanelState,
+            })
+          }
         />
+        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+          <PaneRenderer
+            pane={activeSplitView.root}
+            splitView={activeSplitView}
+            renderLeaf={renderLeaf}
+            onSetRatio={handleSetRatio}
+          />
+        </div>
       </div>
       <Dialog
         open={threadPickerPaneId !== null}

@@ -52,6 +52,7 @@ import { EnvironmentLocalServersSection } from "./EnvironmentLocalServersSection
 import { EnvironmentPullRequestSection } from "./EnvironmentPullRequestSection";
 import { EnvironmentMarkersSection } from "./EnvironmentMarkersSection";
 import { EnvironmentStudioOutputsSection } from "./EnvironmentStudioOutputsSection";
+import { EnvironmentTestsSection } from "./EnvironmentTestsSection";
 import { EnvironmentNotesSection } from "./EnvironmentNotesSection";
 import { EnvironmentPinnedSection } from "./EnvironmentPinnedSection";
 import { EnvironmentProjectInstructionsSection } from "./EnvironmentProjectInstructionsSection";
@@ -376,6 +377,10 @@ export function EnvironmentPanel({
         dangling rule. Visibility is gated on the per-section AppSettings flags.
       */}
       {settings.showEnvironmentUsage ? <EnvironmentUsageSection provider={activeProvider} /> : null}
+
+      {settings.showEnvironmentTests && activeThreadId ? (
+        <EnvironmentTestsSection threadId={activeThreadId} enabled={open} />
+      ) : null}
 
       {settings.showEnvironmentRepository && githubRepository && onOpenGithubRepository ? (
         <EnvironmentLabeledSection label="Repository">

@@ -574,6 +574,7 @@ export function projectEvent(
             settledAt: null,
             deletedAt: null,
             handoff: payload.handoff,
+            bakeoff: payload.bakeoff ?? null,
             messages: [],
             activities: [],
             checkpoints: [],
@@ -711,6 +712,7 @@ export function projectEvent(
               ...(payload.subagentRole !== undefined ? { subagentRole: payload.subagentRole } : {}),
               ...(payload.lastKnownPr !== undefined ? { lastKnownPr: payload.lastKnownPr } : {}),
               ...(payload.handoff !== undefined ? { handoff: payload.handoff } : {}),
+              ...(payload.bakeoff !== undefined ? { bakeoff: payload.bakeoff } : {}),
               ...(payload.pinnedMessages !== undefined
                 ? { pinnedMessages: payload.pinnedMessages }
                 : {}),
