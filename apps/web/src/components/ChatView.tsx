@@ -465,7 +465,10 @@ import { useNowMs } from "~/hooks/useNowMs";
 import { useThreadRecap } from "~/hooks/useThreadRecap";
 import { useRepoDiffTotals } from "~/hooks/useRepoDiffTotals";
 import { useIsMobile } from "~/hooks/useMediaQuery";
-import { useCopyThreadIdToClipboard } from "~/hooks/useCopyToClipboard";
+import {
+  useCopyThreadIdToClipboard,
+  useCopyThreadLinkToClipboard,
+} from "~/hooks/useCopyToClipboard";
 import {
   acknowledgedRiskIdsForFormWarnings,
   AutomationDialog,
@@ -6324,6 +6327,7 @@ export default function ChatView({
   );
 
   const copyThreadIdToClipboard = useCopyThreadIdToClipboard();
+  const copyThreadLinkToClipboard = useCopyThreadLinkToClipboard();
 
   useEffect(() => {
     if (surfaceMode === "split" && !isFocusedPane) {
@@ -6588,6 +6592,13 @@ export default function ChatView({
         return;
       }
 
+      if (command === "thread.copyLink") {
+        event.preventDefault();
+        event.stopPropagation();
+        copyThreadLinkToClipboard(activeThreadId);
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -6645,6 +6656,7 @@ export default function ChatView({
     modelOptionsByProvider,
     onProviderModelSelect,
     copyThreadIdToClipboard,
+    copyThreadLinkToClipboard,
   ]);
 
   // Preserve the original "single mic button" contract:
@@ -12046,6 +12058,10 @@ export default function ChatView({
       />
       <RateLimitBanner
         rateLimitStatus={visibleActiveRateLimitStatus}
+        currentProvider={selectedProvider}
+        onHandoffToProvider={(provider) => {
+          void onCreateHandoffThread(provider);
+        }}
         onDismiss={dismissActiveRateLimitBanner}
       />
       {terminalWorkspaceOpen && !isEditorRail ? (

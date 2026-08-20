@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { toastManager } from "../components/ui/toast";
+import { buildThreadLinkFromWindow } from "../lib/threadLink";
 
 function fallbackCopyTextToClipboard(value: string): boolean {
   if (typeof document === "undefined" || typeof document.execCommand !== "function") {
@@ -227,4 +228,17 @@ export function useCopyThreadIdToClipboard(): (threadId: string) => void {
       successDescription: threadId,
       errorTitle: "Failed to copy thread ID",
     });
+}
+
+/** Copy a local task URL. The link only works on this Synara instance. */
+export function useCopyThreadLinkToClipboard(): (threadId: string) => void {
+  const copy = useCopyWithToasts();
+  return (threadId: string) => {
+    const url = buildThreadLinkFromWindow(threadId);
+    copy(url, {
+      successTitle: "Link copied",
+      successDescription: url,
+      errorTitle: "Failed to copy task link",
+    });
+  };
 }

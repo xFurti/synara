@@ -250,7 +250,7 @@ export const DEFAULT_SHORTCUT_FALLBACKS: ResolvedKeybindingsConfig = [
     whenAst: whenThreadJumpAvailable,
   },
   {
-    command: "thread.copyId",
+    command: "thread.copyLink",
     shortcut: commandShortcut("c", { shiftKey: true }),
     whenAst: whenModChordAllowed,
   },

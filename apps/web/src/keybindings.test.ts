@@ -454,7 +454,7 @@ const DEFAULT_BINDINGS = compile([
   },
   {
     shortcut: modShortcut("c", { shiftKey: true }),
-    command: "thread.copyId",
+    command: "thread.copyLink",
     whenAst: whenModChordAllowed,
   },
   {
@@ -806,14 +806,14 @@ describe("copy thread id shortcut", () => {
         platform: "MacIntel",
         context: { terminalFocus: false },
       }),
-      "thread.copyId",
+      "thread.copyLink",
     );
     assert.strictEqual(
       resolveShortcutCommand(event({ key: "c", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
         context: { terminalFocus: false },
       }),
-      "thread.copyId",
+      "thread.copyLink",
     );
   });
 
@@ -823,7 +823,7 @@ describe("copy thread id shortcut", () => {
         platform: "MacIntel",
         context: { terminalFocus: true },
       }),
-      "thread.copyId",
+      "thread.copyLink",
     );
     assert.isNull(
       resolveShortcutCommand(event({ key: "c", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {

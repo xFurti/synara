@@ -56,7 +56,8 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
 - `chat.newTerminal`: create a new terminal-first thread preserving the active thread's branch/worktree state
 - `composer.focus.toggle`: focus or blur the chat prompt composer
-- `thread.copyId`: copy the active thread's ID to the clipboard
+- `thread.copyLink`: copy a local URL that opens the active task in this Synara instance
+- `thread.copyId`: copy the active thread's ID to the clipboard (not a URL)
 - `editor.openFavorite`: open current project/worktree in the last-used editor
 - `script.{id}.run`: run a project script by id (for example `script.test.run`)
 

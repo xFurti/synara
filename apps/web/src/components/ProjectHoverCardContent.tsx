@@ -9,6 +9,8 @@
 //      app's menu rows (12px UI font, compact padding) so it reads as native.
 
 import { MessageCircleIcon, SettingsIcon } from "~/lib/icons";
+import type { ProjectRecap } from "~/lib/projectRecap";
+import { projectRecapHasOpenWork } from "~/lib/projectRecap";
 import { PinStatusIcon, pinActionLabel } from "~/lib/pin";
 import { cn } from "~/lib/utils";
 import { FolderClosed, FolderOpen } from "./FolderClosed";
@@ -25,6 +27,9 @@ export type ProjectHoverCardContentProps = {
   path: string;
   onTogglePin: () => void;
   onEditProject: () => void;
+  recap?: ProjectRecap;
+  lastActivityLabel?: string | null;
+  onOpenThread?: (threadId: string) => void;
 };
 
 // One shared row rhythm for every line. No dividers: the card separates rows
@@ -48,6 +53,9 @@ export function ProjectHoverCardContent({
   path,
   onTogglePin,
   onEditProject,
+  recap,
+  lastActivityLabel,
+  onOpenThread,
 }: ProjectHoverCardContentProps) {
   return (
     <div
@@ -73,6 +81,39 @@ export function ProjectHoverCardContent({
         <MessageCircleIcon className={ICON_CLASS_NAME} aria-hidden />
         <span className="min-w-0 truncate">{formatChatCount(chatCount)}</span>
       </div>
+      {recap ? (
+        <div className={cn(ROW_CLASS_NAME, "text-foreground/80")}>
+          <span className="min-w-0 truncate">
+            {projectRecapHasOpenWork(recap)
+              ? [
+                  recap.working > 0 ? `${recap.working} working` : null,
+                  recap.waiting > 0 ? `${recap.waiting} waiting` : null,
+                  recap.blocked > 0 ? `${recap.blocked} blocked` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              : chatCount > 0
+                ? "Nothing in progress"
+                : null}
+            {lastActivityLabel ? ` · ${lastActivityLabel}` : ""}
+          </span>
+        </div>
+      ) : null}
+      {recap?.headlines.map((headline) => (
+        <button
+          key={headline.threadId}
+          type="button"
+          onClick={() => onOpenThread?.(headline.threadId)}
+          className={cn(
+            ROW_CLASS_NAME,
+            "cursor-pointer text-left text-foreground/80 transition-colors hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground",
+          )}
+        >
+          <span className="min-w-0 truncate">
+            {headline.lane}: {headline.title}
+          </span>
+        </button>
+      ))}
       <div className="-mx-0.5 my-0.5 h-px bg-[color:var(--color-border)]" aria-hidden />
       <div className={cn(ROW_CLASS_NAME, "text-foreground/80")}>
         <FolderClosed className={ICON_CLASS_NAME} aria-hidden />

@@ -13,7 +13,11 @@ import { type MouseEvent, useState } from "react";
 
 import { useAppSettings } from "~/appSettings";
 import { RenameThreadDialog } from "~/components/RenameThreadDialog";
-import { useCopyPathToClipboard, useCopyThreadIdToClipboard } from "~/hooks/useCopyToClipboard";
+import {
+  useCopyPathToClipboard,
+  useCopyThreadIdToClipboard,
+  useCopyThreadLinkToClipboard,
+} from "~/hooks/useCopyToClipboard";
 import { deleteActiveThreadFromClient } from "~/lib/activeThreadDelete";
 import { gitRemoveWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { pinActionLabel } from "~/lib/pin";
@@ -87,6 +91,7 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
 
   const copyPathToClipboard = useCopyPathToClipboard();
   const copyThreadIdToClipboard = useCopyThreadIdToClipboard();
+  const copyThreadLinkToClipboard = useCopyThreadLinkToClipboard();
 
   const deleteCardThread = async (card: KanbanCard) => {
     // A deleted thread can never reconcile its optimistic dispatch — drop the
@@ -141,7 +146,12 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
           ...(workspacePath
             ? [{ id: "copy-path", label: "Copy Path", separatorBefore: true }]
             : []),
-          ...(isThreadBacked ? [{ id: "copy-thread-id", label: "Copy Thread ID" }] : []),
+          ...(isThreadBacked
+            ? [
+                { id: "copy-task-link", label: "Copy link" },
+                { id: "copy-thread-id", label: "Copy Thread ID" },
+              ]
+            : []),
           ...(isThreadActionCard
             ? [{ id: "archive", label: "Archive", separatorBefore: true }]
             : []),
@@ -172,6 +182,10 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
       if (clicked === "copy-path") {
         if (!workspacePath) return;
         copyPathToClipboard(workspacePath);
+        return;
+      }
+      if (clicked === "copy-task-link") {
+        copyThreadLinkToClipboard(card.threadId);
         return;
       }
       if (clicked === "copy-thread-id") {

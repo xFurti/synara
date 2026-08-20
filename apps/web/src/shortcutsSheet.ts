@@ -194,9 +194,14 @@ const AVAILABLE_NOW_DEFINITIONS: readonly ShortcutDefinition[] = [
     description: "Reveal the iOS Simulator panel for the active thread. macOS servers only.",
   },
   {
+    command: "thread.copyLink",
+    label: "Copy task link",
+    description: "Copy a local URL that opens this task in this Synara instance.",
+  },
+  {
     command: "thread.copyId",
     label: "Copy thread ID",
-    description: "Copy the active thread's ID to the clipboard.",
+    description: "Copy the active thread's ID to the clipboard. This is not a URL.",
   },
   {
     command: "chat.visible.previous",

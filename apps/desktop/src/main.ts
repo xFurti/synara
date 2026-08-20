@@ -1915,8 +1915,41 @@ function repairBrowserProfileBeforeElectronReady(userDataPath: string): void {
   }
 }
 
+function findDesktopProtocolUrl(argv: readonly string[]): string | null {
+  const prefix = `${desktopIdentity.scheme}:`;
+  return argv.find((argument) => argument.startsWith(prefix)) ?? null;
+}
+
+function parseProtocolThreadId(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const match = `${parsed.pathname}${parsed.hash}`.match(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/iu,
+    );
+    return match?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function openThreadFromProtocolUrl(url: string): void {
+  focusMainWindow();
+  const threadId = parseProtocolThreadId(url);
+  if (!threadId || !mainWindow) {
+    return;
+  }
+  mainWindow.webContents.send(IPC.menuAction, `notification-open-thread:${threadId}`);
+}
+
 function configureAppIdentity(): void {
   app.setName(APP_DISPLAY_NAME);
+  if (process.defaultApp) {
+    app.setAsDefaultProtocolClient(desktopIdentity.scheme, process.execPath, [
+      Path.resolve(process.argv[1] ?? "."),
+    ]);
+  } else {
+    app.setAsDefaultProtocolClient(desktopIdentity.scheme);
+  }
   const commitHash = resolveAboutCommitHash();
   app.setAboutPanelOptions({
     applicationName: APP_DISPLAY_NAME,
@@ -4727,9 +4760,22 @@ configureAppIdentity();
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, commandLine) => {
+    const protocolUrl = findDesktopProtocolUrl(commandLine);
+    if (protocolUrl) {
+      openThreadFromProtocolUrl(protocolUrl);
+      return;
+    }
     focusMainWindow();
   });
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    openThreadFromProtocolUrl(url);
+  });
+  const launchProtocolUrl = findDesktopProtocolUrl(process.argv);
+  if (launchProtocolUrl) {
+    app.whenReady().then(() => openThreadFromProtocolUrl(launchProtocolUrl));
+  }
 }
 
 async function bootstrap(): Promise<void> {

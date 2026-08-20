@@ -183,6 +183,7 @@ import { SidebarLeadingControls } from "./SidebarHeaderNavigationControls";
 import { ProjectSidebarIcon } from "./ProjectSidebarIcon";
 import { ThreadHoverCardContent } from "./ThreadHoverCardContent";
 import { ProjectHoverCardContent } from "./ProjectHoverCardContent";
+import { deriveProjectRecap } from "~/lib/projectRecap";
 import {
   SIDEBAR_HOVER_CARD_POPUP_PROPS,
   SIDEBAR_HOVER_CARD_SURFACE_CLASS_NAME,
@@ -335,7 +336,11 @@ import {
   sortThreadsForSidebar,
 } from "./Sidebar.logic";
 import type { LastThreadRoute } from "../chatRouteRestore";
-import { useCopyPathToClipboard, useCopyThreadIdToClipboard } from "~/hooks/useCopyToClipboard";
+import {
+  useCopyPathToClipboard,
+  useCopyThreadIdToClipboard,
+  useCopyThreadLinkToClipboard,
+} from "~/hooks/useCopyToClipboard";
 import { DESKTOP_TOP_BAR_TRAFFIC_LIGHT_GUTTER_CLASS } from "~/hooks/useDesktopTopBarGutter";
 import { cn } from "~/lib/utils";
 import {
@@ -2889,6 +2894,7 @@ export default function Sidebar() {
   );
 
   const copyThreadIdToClipboard = useCopyThreadIdToClipboard();
+  const copyThreadLinkToClipboard = useCopyThreadLinkToClipboard();
   const copyPathToClipboard = useCopyPathToClipboard();
   const handoffThread = useCallback(
     async (thread: Thread, targetProvider: ProviderKind) => {
@@ -2974,6 +2980,7 @@ export default function Sidebar() {
           ...(threadWorkspacePath
             ? [{ id: "open-path-in-terminal", label: "Open Path in Terminal" }]
             : []),
+          { id: "copy-task-link", label: "Copy link" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
           ...(options?.extraItems ?? []),
           // Subagent threads are archived and restored through their parent
@@ -3114,6 +3121,10 @@ export default function Sidebar() {
         }
         return;
       }
+      if (clicked === "copy-task-link") {
+        copyThreadLinkToClipboard(threadId);
+        return;
+      }
       if (clicked === "copy-thread-id") {
         copyThreadIdToClipboard(threadId);
         return;
@@ -3134,6 +3145,7 @@ export default function Sidebar() {
       confirmAndDeleteThread,
       copyPathToClipboard,
       copyThreadIdToClipboard,
+      copyThreadLinkToClipboard,
       clearDismissedThreadStatus,
       clearThreadNotification,
       handoffThread,
@@ -4349,6 +4361,15 @@ export default function Sidebar() {
           isPinned={pinnedProjectIdSet.has(project.id)}
           chatCount={chatCount}
           path={abbreviateHomePath(project.cwd, homeDir)}
+          recap={deriveProjectRecap(sortedSidebarThreadsByProjectId.get(project.id) ?? [])}
+          lastActivityLabel={
+            projectLastActivityAt.get(project.id)
+              ? formatRelativeTime(projectLastActivityAt.get(project.id)!)
+              : null
+          }
+          onOpenThread={(threadId) => {
+            void navigate({ to: "/$threadId", params: { threadId } });
+          }}
           onTogglePin={() => toggleProjectPinned(project.id)}
           onEditProject={() => void handleProjectContextMenuAction(project.id, "rename")}
         />
@@ -5411,6 +5432,15 @@ export default function Sidebar() {
         shortcutLabel: newThreadShortcutLabel,
       },
       {
+        id: "copy-task-link",
+        label: "Copy task link",
+        description: "Copy a local URL that opens the focused task in this Synara.",
+        keywords: ["copy", "link", "url", "task", "thread"],
+        run: visualActiveSidebarThreadId
+          ? () => copyThreadLinkToClipboard(visualActiveSidebarThreadId)
+          : undefined,
+      },
+      {
         id: "add-project",
         label: "Add project",
         description: "Open a repository or folder in the sidebar.",
@@ -5497,6 +5527,7 @@ export default function Sidebar() {
     ],
     [
       addProjectShortcutLabel,
+      copyThreadLinkToClipboard,
       handleSelectSpace,
       handleStartAddProject,
       importThreadShortcutLabel,
@@ -5505,6 +5536,7 @@ export default function Sidebar() {
       openSpaceCreator,
       spaces,
       usageSettingsShortcutLabel,
+      visualActiveSidebarThreadId,
       voidSpace,
     ],
   );

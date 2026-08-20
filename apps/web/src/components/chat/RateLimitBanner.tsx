@@ -3,11 +3,15 @@
 // Layer: Chat status presentation
 // Exports: RateLimitBanner and rate-limit derivation helpers.
 
-import type { OrchestrationThreadActivity } from "@synara/contracts";
+import type { OrchestrationThreadActivity, ProviderKind } from "@synara/contracts";
+import { PROVIDER_DISPLAY_NAMES } from "@synara/contracts";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { IconButton } from "../ui/icon-button";
 import { CircleAlertIcon, XIcon } from "~/lib/icons";
 import { ChatColumnBannerFrame } from "./ChatColumnBannerFrame";
+import { Button } from "../ui/button";
+
+const RATE_LIMIT_FALLBACK_PROVIDERS = ["grok", "codex"] as const satisfies readonly ProviderKind[];
 
 export type RateLimitStatus = {
   status: "rejected" | "allowed_warning";
@@ -56,14 +60,21 @@ function formatResetsAt(resetsAt: string): string {
 export const RateLimitBanner = function RateLimitBanner({
   onDismiss,
   rateLimitStatus,
+  currentProvider,
+  onHandoffToProvider,
 }: {
   onDismiss?: () => void;
   rateLimitStatus: RateLimitStatus | null;
+  currentProvider?: ProviderKind;
+  onHandoffToProvider?: (provider: ProviderKind) => void;
 }) {
   if (!rateLimitStatus) return null;
 
   const { status, resetsAt, utilization } = rateLimitStatus;
   const isRejected = status === "rejected";
+  const fallbackProviders = isRejected
+    ? RATE_LIMIT_FALLBACK_PROVIDERS.filter((provider) => provider !== currentProvider)
+    : [];
 
   const message = isRejected
     ? `Rate limit reached.${resetsAt ? formatResetsAt(resetsAt) : ""}`
@@ -73,7 +84,24 @@ export const RateLimitBanner = function RateLimitBanner({
     <ChatColumnBannerFrame>
       <Alert variant={isRejected ? "error" : "warning"}>
         <CircleAlertIcon />
-        <AlertDescription>{message}</AlertDescription>
+        <AlertDescription>
+          <span>{message}</span>
+          {fallbackProviders.length > 0 && onHandoffToProvider ? (
+            <span className="mt-1.5 flex flex-wrap gap-1.5">
+              {fallbackProviders.map((provider) => (
+                <Button
+                  key={provider}
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => onHandoffToProvider(provider)}
+                >
+                  Continue with {PROVIDER_DISPLAY_NAMES[provider]}
+                </Button>
+              ))}
+            </span>
+          ) : null}
+        </AlertDescription>
         {onDismiss ? (
           <AlertAction>
             <IconButton
