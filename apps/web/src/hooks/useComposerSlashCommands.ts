@@ -67,6 +67,13 @@ function wasPromptReplacementApplied(result: number | false): boolean {
   return result !== false;
 }
 
+function latestThreadBakeoffPrompt(thread: Thread | undefined): string {
+  const lastUserMessage = [...(thread?.messages ?? [])]
+    .reverse()
+    .find((message) => message.role === "user" && message.text.trim().length > 0);
+  return thread?.goal?.trim() || lastUserMessage?.text.trim() || "";
+}
+
 export function useComposerSlashCommands(input: {
   activeProject: Project | undefined;
   activeThread: Thread | undefined;
@@ -745,6 +752,47 @@ export function useComposerSlashCommands(input: {
     return false;
   }, [editorActions, providerCommandDiscoveryCwd, threadId]);
 
+  const runBakeoffSlashCommand = useCallback(
+    async (args: string): Promise<void> => {
+      if (!canOfferBakeoffCommand || !activeProject) {
+        toastManager.add({
+          type: "warning",
+          title: "Bake-off is unavailable",
+          description: "Use /bakeoff from a Git project with another provider signed in.",
+        });
+        return;
+      }
+      const parsed = parseBakeoffSlashCommandArgs(args, {
+        currentProvider: selectedModelSelection.provider,
+        availableTargetProviders: bakeoffTargetProviders,
+      });
+      const prompt = parsed.prompt.trim() || latestThreadBakeoffPrompt(activeThread);
+      await startBakeoff({
+        project: activeProject,
+        sourceThread: activeThread,
+        currentProvider: selectedModelSelection.provider,
+        requestedProviders: parsed.providers,
+        usableProviders: [selectedModelSelection.provider, ...bakeoffTargetProviders].filter(
+          (provider, index, all) => all.indexOf(provider) === index,
+        ),
+        prompt,
+        baseRef: activeRootBranch,
+        copyChangesFrom:
+          (activeThread?.envMode ?? environmentMode) === "local" ? activeProject.cwd : null,
+      });
+    },
+    [
+      activeProject,
+      activeRootBranch,
+      activeThread,
+      bakeoffTargetProviders,
+      canOfferBakeoffCommand,
+      environmentMode,
+      selectedModelSelection.provider,
+      startBakeoff,
+    ],
+  );
+
   const runExportSlashCommand = useCallback(() => {
     // Re-validate at call time (mirrors /compact): menu selections and stale
     // highlights can outlive the availability computed at render time.
@@ -971,55 +1019,20 @@ export function useComposerSlashCommands(input: {
         return true;
       }
       if (slashInvocation.command === "bakeoff") {
-        if (!canOfferBakeoffCommand || !activeProject) {
-          toastManager.add({
-            type: "warning",
-            title: "Bake-off is unavailable",
-            description: "Use /bakeoff from a Git project with another provider signed in.",
-          });
-          return true;
-        }
-        const parsed = parseBakeoffSlashCommandArgs(slashInvocation.args, {
-          currentProvider: selectedModelSelection.provider,
-          availableTargetProviders: bakeoffTargetProviders,
-        });
-        const lastUserMessage = [...(activeThread?.messages ?? [])]
-          .reverse()
-          .find((message) => message.role === "user" && message.text.trim().length > 0);
-        const prompt =
-          parsed.prompt.trim() || activeThread?.goal?.trim() || lastUserMessage?.text.trim() || "";
         editorActions.clearComposerSlashDraft();
-        await startBakeoff({
-          project: activeProject,
-          sourceThread: activeThread,
-          currentProvider: selectedModelSelection.provider,
-          requestedProviders: parsed.providers,
-          usableProviders: [selectedModelSelection.provider, ...bakeoffTargetProviders].filter(
-            (provider, index, all) => all.indexOf(provider) === index,
-          ),
-          prompt,
-          baseRef: activeRootBranch,
-          copyChangesFrom:
-            (activeThread?.envMode ?? environmentMode) === "local" ? activeProject.cwd : null,
-        });
+        await runBakeoffSlashCommand(slashInvocation.args);
         return true;
       }
       return false;
     },
     [
       availableBuiltInSlashCommands,
-      activeProject,
-      activeRootBranch,
-      activeThread,
-      bakeoffTargetProviders,
-      canOfferBakeoffCommand,
       canOfferSideCommand,
       checkClaudeFastSlashCommandAvailability,
       compactProviderThread,
       createForkThreadFromSlashCommand,
       createSidechatFromSlashCommand,
       editorActions,
-      environmentMode,
       handleClearConversation,
       handleInteractionModeChange,
       openForkTargetPicker,
@@ -1032,8 +1045,8 @@ export function useComposerSlashCommands(input: {
       runCodexReviewStart,
       runExportSlashCommand,
       runFastSlashCommand,
+      runBakeoffSlashCommand,
       runGoalSlashCommand,
-      startBakeoff,
     ],
   );
 
@@ -1220,9 +1233,39 @@ export function useComposerSlashCommands(input: {
               error instanceof Error ? error.message : "An error occurred while creating Side.",
           });
         });
+        return;
+      }
+
+      if (item.command === "bakeoff") {
+        if (latestThreadBakeoffPrompt(activeThread)) {
+          const applied = clearSlashCommandFromComposer();
+          if (!wasPromptReplacementApplied(applied)) {
+            return;
+          }
+          editorActions.setComposerHighlightedItemId(null);
+          void runBakeoffSlashCommand("");
+          return;
+        }
+        const replacement = `/${item.command} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = editorActions.applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+        );
+        if (wasPromptReplacementApplied(applied)) {
+          editorActions.setComposerHighlightedItemId(null);
+          editorActions.scheduleComposerFocus();
+        }
       }
     },
     [
+      activeThread,
       compactProviderThread,
       createSidechatFromSlashCommand,
       editorActions,
@@ -1233,6 +1276,7 @@ export function useComposerSlashCommands(input: {
       openReviewTargetPicker,
       selectedProvider,
       supportsTextNativeReviewCommand,
+      runBakeoffSlashCommand,
       runExportSlashCommand,
       runFastSlashCommand,
     ],
