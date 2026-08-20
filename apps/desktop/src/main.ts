@@ -274,9 +274,10 @@ const shellEnvironmentSync = syncShellEnvironment();
 const IPC = DESKTOP_IPC_CHANNELS;
 const MAX_CLIPBOARD_IMAGE_DATA_URL_LENGTH = 16 * 1024 * 1024;
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
+declare const __SYNARA_DESKTOP_FLAVOR__: string;
 const desktopFlavor = resolveSynaraDesktopFlavor({
   isDevelopment,
-  requestedFlavor: process.env.SYNARA_DESKTOP_FLAVOR,
+  requestedFlavor: process.env.SYNARA_DESKTOP_FLAVOR || __SYNARA_DESKTOP_FLAVOR__,
 });
 const desktopIdentity = synaraDesktopIdentity(desktopFlavor);
 const BASE_DIR =

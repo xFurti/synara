@@ -15,6 +15,7 @@ export const MAC_APPSNAP_HELPER_BUNDLE_PATH = "Contents/Helpers/synara-appsnap-h
 export const MAC_DEVICE_HELPER_STAGE_PATH = "apps/server/dist/device-helper";
 export const MAC_DEVICE_HELPER_RESOURCE_PATH = "Resources/device-helper";
 export const WINDOWS_INSTALLER_GUID = "368107a8-afe6-5db5-ab3b-d4f331684868";
+export const WINDOWS_CANARY_INSTALLER_GUID = "7f1c2e9a-6b40-5d8c-a3e1-91d4c8b5e027";
 const MAC_DMG_ICON_PATH = "icon.icns";
 export const NODE_PTY_ASAR_UNPACK_GLOBS = ["node_modules/node-pty/**"] as const;
 
@@ -33,6 +34,7 @@ export interface CreateDesktopPlatformBuildConfigInput {
   readonly platform: "linux" | "mac" | "win";
   readonly target: string;
   readonly signed?: boolean;
+  readonly flavor?: "production" | "canary";
   readonly windowsAzureSignOptions?: Record<string, string>;
 }
 
@@ -112,32 +114,38 @@ export function createDesktopPlatformBuildConfig(
   }
 
   if (input.platform === "linux") {
+    const executableName = input.flavor === "canary" ? "synara-canary" : "synara";
     return {
       ...nativePackaging,
       linux: {
         target: [input.target],
-        executableName: "synara",
+        executableName,
         icon: "icon.png",
         category: "Development",
         desktop: {
           entry: {
-            StartupWMClass: "synara",
+            StartupWMClass: executableName,
           },
         },
       },
     };
   }
 
+  const windowsExecutableName = input.flavor === "canary" ? "synara-canary" : undefined;
   return {
     ...nativePackaging,
     // Keep the Windows product registration stable while the public app ID changes.
     // This lets NSIS updates replace the existing installation and own its uninstaller.
     nsis: {
-      guid: WINDOWS_INSTALLER_GUID,
+      guid: input.flavor === "canary" ? WINDOWS_CANARY_INSTALLER_GUID : WINDOWS_INSTALLER_GUID,
+      ...(input.flavor === "canary" ? { include: "installer-canary.nsh" } : {}),
     },
     win: {
       target: [input.target],
       icon: "icon.ico",
+      // Canary must not be named "Synara Canary.exe": NSIS's running-app check
+      // substring-matches "Synara.exe" and would offer to close the official app.
+      ...(windowsExecutableName ? { executableName: windowsExecutableName } : {}),
       ...(input.windowsAzureSignOptions
         ? {
             publisherName: input.windowsAzureSignOptions.publisherName,

@@ -21,7 +21,7 @@ import {
   MAC_DEVICE_HELPER_RESOURCE_PATH,
   validateDesktopNativeBuildHost,
 } from "./lib/desktop-platform-build-config.ts";
-import { SYNARA_PRODUCTION_BUNDLE_ID } from "@synara/shared/desktopIdentity";
+import { synaraDesktopIdentity } from "@synara/shared/desktopIdentity";
 import { parseBooleanEnvValue } from "./lib/env-bool.ts";
 import { finalizeSignedMacDmg } from "./lib/mac-dmg-finalize.ts";
 import { finalizeMacUpdateZip } from "./lib/mac-update-zip-finalize.ts";
@@ -40,6 +40,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
+const BuildFlavor = Schema.Literals(["production", "canary"]);
 const requireFromScriptsWorkspace = createRequire(new URL("./package.json", import.meta.url));
 
 const RepoRoot = Effect.service(Path.Path).pipe(
@@ -114,6 +115,7 @@ interface BuildCliInput {
   readonly verbose: Option.Option<boolean>;
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<string>;
+  readonly flavor: Option.Option<typeof BuildFlavor.Type>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -213,6 +215,7 @@ interface ResolvedBuildOptions {
   readonly verbose: boolean;
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: string | undefined;
+  readonly flavor: typeof BuildFlavor.Type;
 }
 
 interface StagePackageJson {
@@ -265,6 +268,7 @@ const BuildEnvConfig = Config.all({
   verbose: Config.string("SYNARA_DESKTOP_VERBOSE").pipe(Config.option),
   mockUpdates: Config.string("SYNARA_DESKTOP_MOCK_UPDATES").pipe(Config.option),
   mockUpdateServerPort: Config.string("SYNARA_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
+  flavor: Config.schema(BuildFlavor, "SYNARA_DESKTOP_FLAVOR").pipe(Config.option),
 });
 
 const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
@@ -315,9 +319,12 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   const envSigned = yield* resolveBooleanEnv("SYNARA_DESKTOP_SIGNED", env.signed);
   const envVerbose = yield* resolveBooleanEnv("SYNARA_DESKTOP_VERBOSE", env.verbose);
   const envMockUpdates = yield* resolveBooleanEnv("SYNARA_DESKTOP_MOCK_UPDATES", env.mockUpdates);
+  const flavor = mergeOptions(input.flavor, env.flavor, "production");
   const releaseDir = resolveBooleanFlag(input.mockUpdates, envMockUpdates)
     ? "release-mock"
-    : "release";
+    : flavor === "canary"
+      ? "release-canary"
+      : "release";
   const outputDir = path.resolve(
     repoRoot,
     mergeOptions(input.outputDir, env.outputDir, releaseDir),
@@ -349,6 +356,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     verbose,
     mockUpdates,
     mockUpdateServerPort,
+    flavor,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -719,21 +727,34 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
-  productName: string,
+  flavor: typeof BuildFlavor.Type,
   signed: boolean,
   mockUpdates: boolean,
   mockUpdateServerPort: string | undefined,
 ) {
+  const identity = synaraDesktopIdentity(flavor);
   const buildConfig: Record<string, unknown> = {
-    appId: SYNARA_PRODUCTION_BUNDLE_ID,
-    productName,
-    artifactName: "Synara-${version}-${arch}.${ext}",
+    appId: identity.bundleId,
+    productName: identity.displayName,
+    artifactName:
+      flavor === "canary"
+        ? "Synara-Canary-${version}-${arch}.${ext}"
+        : "Synara-${version}-${arch}.${ext}",
     directories: {
       buildResources: "apps/desktop/resources",
     },
     forceCodeSigning: signed,
   };
-  const publishConfig = resolveGitHubPublishConfig();
+  if (flavor === "canary") {
+    // Local Canary packs skip electron-builder native rebuilds. Windows SDK
+    // Spectre-mitigated CRT libraries are not always present, and node-pty
+    // already comes from the staged install. Tray and quit still work.
+    buildConfig.npmRebuild = false;
+    buildConfig.nodeGypRebuild = false;
+    buildConfig.buildDependenciesFromSource = false;
+    buildConfig.executableName = "synara-canary";
+  }
+  const publishConfig = flavor === "canary" ? undefined : resolveGitHubPublishConfig();
   if (publishConfig) {
     buildConfig.publish = [publishConfig];
   } else if (mockUpdates) {
@@ -763,6 +784,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     platform,
     target,
     signed,
+    flavor,
     ...(windowsAzureSignOptions ? { windowsAzureSignOptions } : {}),
   } as const;
 
@@ -772,6 +794,30 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig,
     windowsPublisherSubject: windowsSigningConfig?.subjectDistinguishedName ?? null,
   };
+});
+
+const EMPTY_DESKTOP_FLAVOR_FALLBACK = 'process.env.SYNARA_DESKTOP_FLAVOR || ""';
+const CANARY_DESKTOP_FLAVOR_FALLBACK = 'process.env.SYNARA_DESKTOP_FLAVOR || "canary"';
+
+const stampStagedDesktopFlavor = Effect.fn("stampStagedDesktopFlavor")(function* (
+  mainJsPath: string,
+  flavor: typeof BuildFlavor.Type,
+) {
+  if (flavor !== "canary") return;
+  const fs = yield* FileSystem.FileSystem;
+  const source = yield* fs.readFileString(mainJsPath);
+  if (source.includes(CANARY_DESKTOP_FLAVOR_FALLBACK)) return;
+  if (!source.includes(EMPTY_DESKTOP_FLAVOR_FALLBACK)) {
+    return yield* new BuildScriptError({
+      message:
+        "Canary pack refused to ship a production Electron identity. Rebuild apps/desktop with SYNARA_DESKTOP_FLAVOR=canary.",
+    });
+  }
+  yield* fs.writeFileString(
+    mainJsPath,
+    source.replaceAll(EMPTY_DESKTOP_FLAVOR_FALLBACK, CANARY_DESKTOP_FLAVOR_FALLBACK),
+  );
+  yield* Effect.log("[desktop-artifact] Stamped Canary flavor into staged Electron main bundle.");
 });
 
 const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(function* (
@@ -1002,6 +1048,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* runCommand(
       ChildProcess.make({
         cwd: repoRoot,
+        env: {
+          ...process.env,
+          ...(options.flavor === "canary" ? { SYNARA_DESKTOP_FLAVOR: "canary" } : {}),
+        },
         ...commandOutputOptions(options.verbose),
         // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
         shell: process.platform === "win32",
@@ -1030,6 +1080,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   yield* Effect.log("[desktop-artifact] Staging release app...");
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
+  yield* stampStagedDesktopFlavor(
+    path.join(stageAppDir, "apps/desktop/dist-electron/main.js"),
+    options.flavor,
+  );
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
 
@@ -1045,14 +1099,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const resolvedBuildConfig = yield* createBuildConfig(
     options.platform,
     options.target,
-    desktopPackageJson.productName ?? "Synara",
+    options.flavor,
     options.signed,
     options.mockUpdates,
     options.mockUpdateServerPort,
   );
 
   const stagePackageJson: StagePackageJson = {
-    name: "synara-desktop",
+    name: options.flavor === "canary" ? "synara-canary" : "synara-desktop",
     version: appVersion,
     buildVersion: appVersion,
     synaraCommitHash: commitHash,
@@ -1110,18 +1164,37 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     }
     buildEnv.npm_config_msvs_version = buildEnv.npm_config_msvs_version ?? "2022";
     buildEnv.GYP_MSVS_VERSION = buildEnv.GYP_MSVS_VERSION ?? "2022";
+    if (options.flavor === "canary") {
+      const disableSpectreProps = [
+        "<Project>",
+        "  <PropertyGroup>",
+        "    <SpectreMitigation>false</SpectreMitigation>",
+        "  </PropertyGroup>",
+        "</Project>",
+        "",
+      ].join("\n");
+      const disableSpectrePropsPath = path.join(stageAppDir, "DisableSpectre.props");
+      yield* fs.writeFileString(disableSpectrePropsPath, disableSpectreProps);
+      yield* fs.writeFileString(path.join(stageAppDir, "Directory.Build.props"), disableSpectreProps);
+      const nodePtyDir = path.join(stageAppDir, "node_modules", "node-pty");
+      if (yield* fs.exists(nodePtyDir)) {
+        yield* fs.writeFileString(path.join(nodePtyDir, "Directory.Build.props"), disableSpectreProps);
+      }
+      buildEnv.ForceImportBeforeCppTargets = disableSpectrePropsPath;
+    }
   }
 
   yield* Effect.log(
     `[desktop-artifact] Building ${options.platform}/${options.target} (arch=${options.arch}, version=${appVersion})...`,
   );
   const electronBuilderCliPath = requireFromScriptsWorkspace.resolve("electron-builder/cli.js");
+  const skipNativeRebuildFlag = options.flavor === "canary" ? "--config.npmRebuild=false" : "";
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
       env: buildEnv,
       ...commandOutputOptions(options.verbose),
-    })`${process.execPath} ${electronBuilderCliPath} ${platformConfig.cliFlag} --${options.arch} --publish never`,
+    })`${process.execPath} ${electronBuilderCliPath} ${platformConfig.cliFlag} --${options.arch} --publish never ${skipNativeRebuildFlag}`,
   );
 
   const stageDistDir = path.join(stageAppDir, "dist");
@@ -1132,7 +1205,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   if (options.platform === "mac") {
-    yield* assertPackagedMacDeviceHelper(stageDistDir, desktopPackageJson.productName ?? "Synara");
+    yield* assertPackagedMacDeviceHelper(
+      stageDistDir,
+      synaraDesktopIdentity(options.flavor).displayName,
+    );
   }
 
   if (options.platform === "mac" && options.target === "dmg" && options.signed) {
@@ -1269,6 +1345,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   mockUpdateServerPort: Flag.string("mock-update-server-port").pipe(
     Flag.withDescription("Mock update server port (env: SYNARA_DESKTOP_MOCK_UPDATE_SERVER_PORT)."),
+    Flag.optional,
+  ),
+  flavor: Flag.choice("flavor", BuildFlavor.literals).pipe(
+    Flag.withDescription(
+      "Packaged identity: production (default) or canary for an isolated test app (env: SYNARA_DESKTOP_FLAVOR).",
+    ),
     Flag.optional,
   ),
 }).pipe(

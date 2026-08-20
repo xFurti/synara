@@ -13,6 +13,7 @@ import {
   NODE_PTY_ASAR_UNPACK_GLOBS,
   validateDesktopNativeBuildHost,
   WINDOWS_INSTALLER_GUID,
+  WINDOWS_CANARY_INSTALLER_GUID,
 } from "./lib/desktop-platform-build-config.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 
@@ -108,6 +109,21 @@ describe("createDesktopPlatformBuildConfig", () => {
       publisherName: "Synara",
       azureSignOptions: { publisherName: "Synara" },
     });
+  });
+
+  it("gives Canary a separate Windows installer identity", () => {
+    const win = createDesktopPlatformBuildConfig({
+      platform: "win",
+      target: "dir",
+      flavor: "canary",
+    });
+
+    assert.notEqual(WINDOWS_CANARY_INSTALLER_GUID, WINDOWS_INSTALLER_GUID);
+    assert.deepStrictEqual(win.nsis, {
+      guid: WINDOWS_CANARY_INSTALLER_GUID,
+      include: "installer-canary.nsh",
+    });
+    assert.equal((win.win as { executableName?: string }).executableName, "synara-canary");
   });
 
   it("omits Azure signing options for unsigned build-only artifacts", () => {

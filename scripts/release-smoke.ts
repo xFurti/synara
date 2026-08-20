@@ -313,6 +313,11 @@ function verifyReleaseWorkflowSafety(): void {
     "__SYNARA_WINDOWS_UPDATER_PUBLISHER__",
     "Expected the Windows updater publisher identity to be compiled into the main bundle.",
   );
+  assertContains(
+    desktopBuildConfig,
+    "__SYNARA_DESKTOP_FLAVOR__",
+    "Expected the desktop flavor identity to be compiled into the main bundle.",
+  );
 
   const updaterSecurity = readFileSync(
     resolve(repoRoot, "apps/desktop/src/electronUpdaterSecurity.ts"),
