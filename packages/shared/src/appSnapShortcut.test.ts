@@ -54,4 +54,32 @@ describe("AppSnap shortcuts", () => {
       appSnapShortcutSystemConflict({ kind: "key-chord", modifier: "control", key: "KeyK" }),
     ).toBeNull();
   });
+
+  it("formats Windows labels and flags Windows-owned chords", () => {
+    expect(appSnapShortcutLabels({ kind: "both-option-keys" }, "windows")).toEqual([
+      "Alt left",
+      "Alt right",
+    ]);
+    expect(
+      appSnapShortcutLabels({ kind: "key-chord", modifier: "option", key: "KeyS" }, "windows"),
+    ).toEqual(["Alt", "S"]);
+    expect(
+      appSnapShortcutSystemConflict(
+        { kind: "key-chord", modifier: "option", key: "Tab" },
+        "windows",
+      ),
+    ).toBe("Windows uses Alt+Tab to switch apps.");
+    expect(
+      appSnapShortcutSystemConflict(
+        { kind: "key-chord", modifier: "command", key: "KeyS" },
+        "windows",
+      ),
+    ).toBe("Win+S is Search.");
+    expect(
+      appSnapShortcutSystemConflict(
+        { kind: "key-chord", modifier: "option", key: "KeyS" },
+        "windows",
+      ),
+    ).toBeNull();
+  });
 });

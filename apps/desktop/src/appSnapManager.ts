@@ -1,7 +1,8 @@
 // FILE: appSnapManager.ts
-// Purpose: Owns the macOS AppSnap helper lifecycle, permission state, and pending captures.
+// Purpose: Owns the AppSnap helper lifecycle, permission state, and pending captures.
 // Layer: Desktop main-process service
-// Depends on: A signed Swift helper plus narrow filesystem/process adapters.
+// Depends on: A signed Swift helper on macOS or a C# helper on Windows, plus
+//             narrow filesystem/process adapters.
 
 import * as ChildProcess from "node:child_process";
 import * as Crypto from "node:crypto";
@@ -192,10 +193,9 @@ async function readRegularFile(
   maximumBytes: number,
   expectedBytes?: number,
 ): Promise<Buffer> {
-  const file = await FS.promises.open(
-    filePath,
-    FS.constants.O_RDONLY | FS.constants.O_NOFOLLOW | FS.constants.O_NONBLOCK,
-  );
+  const extraFlags =
+    process.platform === "win32" ? 0 : FS.constants.O_NOFOLLOW | FS.constants.O_NONBLOCK;
+  const file = await FS.promises.open(filePath, FS.constants.O_RDONLY | extraFlags);
   try {
     const stats = await file.stat();
     if (!stats.isFile()) throw new Error("Expected a regular file.");
@@ -240,6 +240,14 @@ export function desktopAppSnapPlatform(platform: NodeJS.Platform): DesktopAppSna
   if (platform === "win32") return "windows";
   if (platform === "linux") return "linux";
   return "other";
+}
+
+export function isAppSnapSupportedPlatform(platform: DesktopAppSnapPlatform): boolean {
+  return platform === "macos" || platform === "windows";
+}
+
+function appSnapUnsupportedMessage(): string {
+  return "AppSnap is available only in the macOS or Windows desktop app.";
 }
 
 export function parseAppSnapHelperMessage(line: string): AppSnapHelperMessage | null {
@@ -318,14 +326,22 @@ export function parseAppSnapHelperMessage(line: string): AppSnapHelperMessage | 
 }
 
 export function isPathInsideDirectory(directory: string, candidate: string): boolean {
-  const relative = Path.relative(Path.resolve(directory), Path.resolve(candidate));
-  return relative.length > 0 && !relative.startsWith(`..${Path.sep}`) && relative !== "..";
+  const resolvedDirectory = Path.resolve(directory);
+  const resolvedCandidate = Path.resolve(candidate);
+  const relative = Path.relative(resolvedDirectory, resolvedCandidate);
+  if (relative.length === 0 || relative === "..") return false;
+  if (Path.isAbsolute(relative)) return false;
+  return !relative.startsWith(`..${Path.sep}`);
 }
 
 function permissionRequiredMessage(
+  platform: DesktopAppSnapPlatform,
   inputMonitoring: DesktopAppSnapPermission,
   screenRecording: DesktopAppSnapPermission,
 ): string {
+  if (platform === "windows") {
+    return "Allow screenshot access for desktop apps in Windows Settings, then try again.";
+  }
   const missing: string[] = [];
   if (inputMonitoring !== "granted") missing.push("Input Monitoring");
   if (screenRecording !== "granted") missing.push("Screen Recording");
@@ -374,18 +390,17 @@ export class DesktopAppSnapManager {
       spawn: options.spawn ?? ChildProcess.spawn,
     };
     this.#platform = desktopAppSnapPlatform(options.platform);
-    this.#status = this.#platform === "macos" ? "disabled" : "unsupported";
-    this.#message =
-      this.#platform === "macos" ? null : "AppSnap is available only in the macOS desktop app.";
+    this.#status = isAppSnapSupportedPlatform(this.#platform) ? "disabled" : "unsupported";
+    this.#message = isAppSnapSupportedPlatform(this.#platform) ? null : appSnapUnsupportedMessage();
   }
 
   getState(): DesktopAppSnapState {
     return {
       platform: this.#platform,
-      supported: this.#platform === "macos",
+      supported: isAppSnapSupportedPlatform(this.#platform),
       enabled: this.#enabled,
       status: this.#status,
-      shortcut: this.#platform === "macos" ? this.#shortcut : null,
+      shortcut: isAppSnapSupportedPlatform(this.#platform) ? this.#shortcut : null,
       inputMonitoringPermission: this.#inputMonitoringPermission,
       screenRecordingPermission: this.#screenRecordingPermission,
       message: this.#message,
@@ -393,14 +408,14 @@ export class DesktopAppSnapManager {
   }
 
   async refreshState(): Promise<DesktopAppSnapState> {
-    if (this.#platform !== "macos" || this.#disposed) return this.getState();
+    if (!isAppSnapSupportedPlatform(this.#platform) || this.#disposed) return this.getState();
     if (!(await this.#runPermissionCommand("--check-permissions"))) return this.getState();
     await this.#reconcileWatchProcess();
     return this.getState();
   }
 
   async setEnabled(enabled: boolean): Promise<DesktopAppSnapState> {
-    if (this.#platform !== "macos" || this.#disposed) return this.getState();
+    if (!isAppSnapSupportedPlatform(this.#platform) || this.#disposed) return this.getState();
     this.#enabled = enabled;
     if (!enabled) {
       this.#stopWatchProcess();
@@ -414,8 +429,11 @@ export class DesktopAppSnapManager {
   }
 
   checkShortcut(shortcut: unknown): DesktopAppSnapShortcutAvailability {
-    if (this.#platform !== "macos") {
-      return { available: false, reason: "AppSnap shortcuts are available only on macOS." };
+    if (!isAppSnapSupportedPlatform(this.#platform)) {
+      return {
+        available: false,
+        reason: "AppSnap shortcuts are available only on macOS and Windows.",
+      };
     }
     if (!isAppSnapShortcut(shortcut)) {
       return {
@@ -426,7 +444,7 @@ export class DesktopAppSnapManager {
     if (shortcut.kind === "both-option-keys") {
       return { available: true, reason: null };
     }
-    const systemConflict = appSnapShortcutSystemConflict(shortcut);
+    const systemConflict = appSnapShortcutSystemConflict(shortcut, this.#platform);
     if (systemConflict) {
       return { available: false, reason: systemConflict };
     }
@@ -439,17 +457,18 @@ export class DesktopAppSnapManager {
     if (!registry) {
       return { available: false, reason: "Global shortcut checks are unavailable." };
     }
+    const hostName = this.#platform === "windows" ? "Windows" : "macOS";
     try {
       if (!registry.register(accelerator, () => undefined)) {
         return {
           available: false,
-          reason: "macOS or another app is already using this shortcut.",
+          reason: `${hostName} or another app is already using this shortcut.`,
         };
       }
       registry.unregister(accelerator);
       return { available: true, reason: null };
     } catch {
-      return { available: false, reason: "macOS could not register this shortcut." };
+      return { available: false, reason: `${hostName} could not register this shortcut.` };
     }
   }
 
@@ -461,7 +480,7 @@ export class DesktopAppSnapManager {
   async setShortcut(shortcut: unknown): Promise<DesktopAppSnapShortcutUpdateResult> {
     const availability = this.checkShortcut(shortcut);
     if (
-      this.#platform !== "macos" ||
+      !isAppSnapSupportedPlatform(this.#platform) ||
       !isAppSnapShortcut(shortcut) ||
       sameAppSnapShortcut(this.#shortcut, shortcut)
     ) {
@@ -477,7 +496,7 @@ export class DesktopAppSnapManager {
   }
 
   async requestPermissions(): Promise<DesktopAppSnapState> {
-    if (this.#platform !== "macos" || this.#disposed) return this.getState();
+    if (!isAppSnapSupportedPlatform(this.#platform) || this.#disposed) return this.getState();
     if (!(await this.#runPermissionCommand("--request-permissions"))) return this.getState();
     await this.#reconcileWatchProcess();
     return this.getState();
@@ -710,7 +729,7 @@ export class DesktopAppSnapManager {
   }
 
   async #reconcileWatchProcessOnce(): Promise<void> {
-    if (this.#disposed || this.#platform !== "macos") return;
+    if (this.#disposed || !isAppSnapSupportedPlatform(this.#platform)) return;
     if (!this.#enabled) {
       this.#stopWatchProcess();
       this.#releaseShortcutReservation();
@@ -725,7 +744,11 @@ export class DesktopAppSnapManager {
       this.#releaseShortcutReservation();
       this.#setState(
         "permission-required",
-        permissionRequiredMessage(this.#inputMonitoringPermission, this.#screenRecordingPermission),
+        permissionRequiredMessage(
+          this.#platform,
+          this.#inputMonitoringPermission,
+          this.#screenRecordingPermission,
+        ),
       );
       return;
     }
@@ -737,7 +760,12 @@ export class DesktopAppSnapManager {
     }
     if (this.#shortcut.kind === "key-chord" && !this.#reserveShortcut(this.#shortcut)) {
       this.#stopWatchProcess();
-      this.#setState("error", "The AppSnap shortcut is already used by macOS or another app.");
+      this.#setState(
+        "error",
+        this.#platform === "windows"
+          ? "The AppSnap shortcut is already used by Windows or another app."
+          : "The AppSnap shortcut is already used by macOS or another app.",
+      );
       return;
     }
     if (this.#shortcut.kind === "both-option-keys") this.#releaseShortcutReservation();
@@ -781,7 +809,7 @@ export class DesktopAppSnapManager {
         this.#options.excludedBundleId,
         ...shortcutArguments,
       ],
-      { stdio: ["pipe", "pipe", "pipe"] },
+      { stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
     );
     // A helper that dies mid-write must not surface as an unhandled stream error.
     child.stdin?.on("error", () => undefined);
@@ -894,7 +922,7 @@ export class DesktopAppSnapManager {
   async #executePermissionCommand(
     command: "--check-permissions" | "--request-permissions",
   ): Promise<boolean> {
-    if (this.#disposed || this.#platform !== "macos") return false;
+    if (this.#disposed || !isAppSnapSupportedPlatform(this.#platform)) return false;
     if (!FS.existsSync(this.#options.helperPath)) {
       this.#setState("error", "The AppSnap native helper is missing from this desktop build.");
       return false;
@@ -905,6 +933,7 @@ export class DesktopAppSnapManager {
       try {
         child = this.#options.spawn(this.#options.helperPath, [command], {
           stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
         });
       } catch (error) {
         this.#setState(
@@ -1002,7 +1031,11 @@ export class DesktopAppSnapManager {
       this.#releaseShortcutReservation();
       this.#setState(
         "permission-required",
-        permissionRequiredMessage(this.#inputMonitoringPermission, this.#screenRecordingPermission),
+        permissionRequiredMessage(
+          this.#platform,
+          this.#inputMonitoringPermission,
+          this.#screenRecordingPermission,
+        ),
       );
     }
     // Benign overlap errors surface as a toast without yanking Synara to the

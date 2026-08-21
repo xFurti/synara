@@ -14,6 +14,9 @@ export const MAC_APPSNAP_HELPER_ASAR_EXCLUSION = "!apps/desktop/native/appsnap/b
 export const MAC_APPSNAP_HELPER_BUNDLE_PATH = "Contents/Helpers/synara-appsnap-helper";
 export const MAC_DEVICE_HELPER_STAGE_PATH = "apps/server/dist/device-helper";
 export const MAC_DEVICE_HELPER_RESOURCE_PATH = "Resources/device-helper";
+export const WINDOWS_APPSNAP_HELPER_STAGE_PATH =
+  "apps/desktop/native/appsnap-win/build/synara-appsnap-helper.exe";
+export const WINDOWS_APPSNAP_HELPER_ASAR_EXCLUSION = "!apps/desktop/native/appsnap-win/build/**";
 export const WINDOWS_INSTALLER_GUID = "368107a8-afe6-5db5-ab3b-d4f331684868";
 const MAC_DMG_ICON_PATH = "icon.icns";
 export const NODE_PTY_ASAR_UNPACK_GLOBS = ["node_modules/node-pty/**"] as const;
@@ -48,6 +51,13 @@ export function validateDesktopNativeBuildHost(input: DesktopNativeBuildHostInpu
     return [
       "macOS desktop artifacts include the native Swift AppSnap helper.",
       `Build mac/${input.arch} on macOS so the helper can be compiled and signed.`,
+      `Current host is ${input.hostPlatform}/${input.hostArch}.`,
+    ].join(" ");
+  }
+  if (input.platform === "win" && input.hostPlatform !== "win32") {
+    return [
+      "Windows desktop artifacts include the native AppSnap helper.",
+      `Build win/${input.arch} on Windows so the helper can be compiled.`,
       `Current host is ${input.hostPlatform}/${input.hostArch}.`,
     ].join(" ");
   }
@@ -130,6 +140,13 @@ export function createDesktopPlatformBuildConfig(
 
   return {
     ...nativePackaging,
+    files: ["**/*", WINDOWS_APPSNAP_HELPER_ASAR_EXCLUSION],
+    extraFiles: [
+      {
+        from: WINDOWS_APPSNAP_HELPER_STAGE_PATH,
+        to: "Helpers/synara-appsnap-helper.exe",
+      },
+    ],
     // Keep the Windows product registration stable while the public app ID changes.
     // This lets NSIS updates replace the existing installation and own its uninstaller.
     nsis: {

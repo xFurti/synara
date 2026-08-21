@@ -3,6 +3,7 @@
 
 import {
   type DesktopAppSnapKeyChord,
+  type DesktopAppSnapPlatform,
   type DesktopAppSnapShortcut,
   type DesktopAppSnapShortcutAvailability,
   type DesktopAppSnapShortcutModifier,
@@ -55,12 +56,14 @@ export function AppSnapShortcutControl({
   shortcut,
   enabled,
   reserved,
+  platform = "macos",
   keybindings,
   onSaved,
 }: {
   shortcut: DesktopAppSnapShortcut;
   enabled: boolean;
   reserved: boolean;
+  platform?: DesktopAppSnapPlatform;
   keybindings: ResolvedKeybindingsConfig;
   onSaved: (shortcut: DesktopAppSnapShortcut, state: DesktopAppSnapState) => void;
 }) {
@@ -74,7 +77,7 @@ export function AppSnapShortcutControl({
   // Source of truth for held modifiers: consecutive keydowns can arrive before
   // React re-renders, so the render-time capture state may lag one event behind.
   const heldCodesRef = useRef<string[]>([]);
-  const labels = appSnapShortcutLabels(candidate);
+  const labels = appSnapShortcutLabels(candidate, platform);
   const changed = !sameAppSnapShortcut(candidate, shortcut);
   const canSave = changed && checkState.availability?.available === true;
   const capturedModifiers = heldModifiers(capture.heldModifierCodes);
@@ -91,14 +94,14 @@ export function AppSnapShortcutControl({
       reportUnavailable(`Synara already uses this for “${commandLabel}”.`);
       return;
     }
-    const systemConflict = appSnapShortcutSystemConflict(nextCandidate);
+    const systemConflict = appSnapShortcutSystemConflict(nextCandidate, platform);
     if (systemConflict) {
       reportUnavailable(systemConflict);
       return;
     }
     const bridge = window.desktopBridge?.appSnap;
     if (!bridge) {
-      reportUnavailable("Requires the Synara desktop app on macOS.");
+      reportUnavailable("Requires the Synara desktop app on macOS or Windows.");
       return;
     }
     setCheckState({ status: "checking", availability: null });
@@ -208,7 +211,9 @@ export function AppSnapShortcutControl({
         ? "Now press the other key…"
         : "Hold a modifier, then press one other key. Esc cancels."))
     : checkState.status === "checking"
-      ? "Checking macOS and other apps…"
+      ? platform === "windows"
+        ? "Checking Windows and other apps…"
+        : "Checking macOS and other apps…"
       : checkState.availability
         ? checkState.availability.available
           ? "Available — save to apply."
@@ -241,7 +246,7 @@ export function AppSnapShortcutControl({
             capturedModifiers.length > 0 ? (
               <KbdGroup>
                 {capturedModifiers.map((modifier) => (
-                  <Kbd key={modifier}>{appSnapShortcutModifierLabel(modifier)}</Kbd>
+                  <Kbd key={modifier}>{appSnapShortcutModifierLabel(modifier, platform)}</Kbd>
                 ))}
                 <span className="text-xs text-muted-foreground">+</span>
                 <span className="animate-pulse px-0.5 text-xs text-muted-foreground">…</span>

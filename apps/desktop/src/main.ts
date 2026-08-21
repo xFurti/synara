@@ -1727,10 +1727,12 @@ function resolveNotificationIconPath(): string | null {
 }
 
 function resolveAppSnapHelperPath(): string {
+  const helperName =
+    process.platform === "win32" ? "synara-appsnap-helper.exe" : "synara-appsnap-helper";
   if (app.isPackaged) {
-    return Path.resolve(process.resourcesPath, "..", "Helpers", "synara-appsnap-helper");
+    return Path.resolve(process.resourcesPath, "..", "Helpers", helperName);
   }
-  return Path.resolve(__dirname, "..", ".electron-runtime", "appsnap", "synara-appsnap-helper");
+  return Path.resolve(__dirname, "..", ".electron-runtime", "appsnap", helperName);
 }
 
 function ensureMainWindowForAppSnap(): BrowserWindow | null {

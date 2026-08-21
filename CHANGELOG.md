@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added Windows AppSnap: an opt-in global shortcut that captures the foreground window and attaches it to the current task, using a packaged native helper, the existing settings panel, welcome dialog, and composer attachment flow.
+
+### Changed
+
+- AppSnap settings, shortcut labels, and permission copy now distinguish macOS (both Option keys, Input Monitoring and Screen Recording) from Windows (both Alt keys, screenshot access).
+
 ## 0.7.3 - 2026-08-21
 
 ### Added

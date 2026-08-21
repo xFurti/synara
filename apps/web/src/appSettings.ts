@@ -258,8 +258,8 @@ export const AppSettingsSchema = Schema.Struct({
   enableTaskCompletionToasts: Schema.Boolean.pipe(withDefaults(() => true)),
   enableSystemTaskCompletionNotifications: Schema.Boolean.pipe(withDefaults(() => true)),
   // Local desktop preference. Native capability/permission state remains owned by Electron.
-  // AppSnap is opt-in because enabling its Settings toggle requests macOS
-  // Input Monitoring and Screen Recording permissions.
+  // AppSnap is opt-in because enabling its Settings toggle starts the native
+  // capture helper and may request OS screenshot/input permissions.
   enableAppSnap: Schema.Boolean.pipe(withDefaults(() => false)),
   appSnapShortcut: AppSnapShortcut.pipe(withDefaults(() => DEFAULT_APP_SNAP_SHORTCUT)),
   // Local desktop preference: play the shutter cue when an AppSnap lands in a composer.

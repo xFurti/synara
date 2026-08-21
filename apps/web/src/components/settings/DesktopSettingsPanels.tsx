@@ -37,10 +37,12 @@ import { SettingsCard, SettingsRow, SettingsSection } from "./SettingsPanelPrimi
 
 function appSnapStatusText(state: DesktopAppSnapState | null): string {
   if (!state) return "Available in the Synara desktop app";
-  if (!state.supported) return state.message ?? "Available on macOS only";
+  if (!state.supported) return state.message ?? "Available on macOS and Windows";
   if (state.status === "ready") {
     const shortcut = state.shortcut;
-    const label = shortcut ? appSnapShortcutLabels(shortcut).join(" + ") : "the shortcut";
+    const label = shortcut
+      ? appSnapShortcutLabels(shortcut, state.platform).join(" + ")
+      : "the shortcut";
     return `Listening — press ${label} to snap`;
   }
   if (state.status === "disabled") return "Off";
@@ -266,7 +268,7 @@ export function AppSnapSettingsPanel({
       toastManager.add({
         type: "warning",
         title: "AppSnap unavailable",
-        description: "AppSnap requires the Synara desktop app on macOS.",
+        description: "AppSnap requires the Synara desktop app on macOS or Windows.",
       });
       return;
     }
@@ -286,7 +288,7 @@ export function AppSnapSettingsPanel({
         toastManager.add({
           type: "warning",
           title: "Finish AppSnap setup",
-          description: state.message ?? "Allow the required macOS permissions, then try again.",
+          description: state.message ?? "Allow the required permissions, then try again.",
         });
       }
     } catch (error) {
@@ -343,8 +345,9 @@ export function AppSnapSettingsPanel({
           {!supported ? (
             <p className={cn(SETTINGS_CARD_ROW_DESCRIPTION_CLASS_NAME, "pt-0.5")}>
               {appSnapState
-                ? (appSnapState.message ?? "AppSnap is available only in the macOS desktop app.")
-                : "AppSnap requires the Synara desktop app on macOS."}
+                ? (appSnapState.message ??
+                  "AppSnap is available only in the macOS or Windows desktop app.")
+                : "AppSnap requires the Synara desktop app on macOS or Windows."}
             </p>
           ) : null}
         </div>
@@ -375,7 +378,11 @@ export function AppSnapSettingsPanel({
 
         <SettingsRow
           title="Shortcut"
-          description="Choose exactly two keys: one modifier and one other key. Synara checks its own bindings and asks macOS whether another app already owns the shortcut before saving it."
+          description={
+            appSnapState?.platform === "windows"
+              ? "Choose exactly two keys: one modifier and one other key. Synara checks its own bindings and whether Windows or another app already owns the shortcut before saving it. Laptops without a right Alt can record a chord instead of both Alt keys."
+              : "Choose exactly two keys: one modifier and one other key. Synara checks its own bindings and asks macOS whether another app already owns the shortcut before saving it."
+          }
           control={
             <AppSnapShortcutControl
               key={
@@ -386,6 +393,7 @@ export function AppSnapSettingsPanel({
               shortcut={settings.appSnapShortcut}
               enabled={enabled}
               reserved={enabled && appSnapState?.status === "ready"}
+              platform={appSnapState?.platform ?? "macos"}
               keybindings={keybindings}
               onSaved={(shortcut, state) => {
                 updateSettings({ appSnapShortcut: shortcut });
@@ -429,7 +437,31 @@ export function AppSnapSettingsPanel({
         />
       </SettingsSection>
 
-      {supported ? (
+      {appSnapState?.supported && appSnapState.platform === "windows" ? (
+        <SettingsSection title="Windows permissions">
+          <SettingsRow
+            title="Screenshot access"
+            description="Lets Synara capture an image of the frontmost window. Only the single window you snap is captured, only at the moment you press the chord. Windows may require this under Settings → Privacy & security → Screenshots and screen recording."
+            control={<AppSnapPermissionBadge permission={appSnapState.screenRecordingPermission} />}
+          />
+          <SettingsRow
+            title="Permission status"
+            description="If a capture fails because screenshot access is off, turn it on for desktop apps, then recheck here."
+            control={
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={() => void recheckAppSnapPermissions()}
+              >
+                Recheck permissions
+              </Button>
+            }
+          />
+        </SettingsSection>
+      ) : null}
+
+      {appSnapState?.supported && appSnapState.platform === "macos" ? (
         <SettingsSection title="macOS permissions">
           <SettingsRow
             title="Input Monitoring"

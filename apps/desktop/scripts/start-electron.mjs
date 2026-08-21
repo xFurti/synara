@@ -1,10 +1,13 @@
 import { spawn } from "node:child_process";
 
 import { buildAppSnapHelper } from "./build-appsnap-helper.mjs";
+import { buildWindowsAppSnapHelper } from "./build-appsnap-helper-windows.mjs";
 import { desktopDir, resolveElectronPath } from "./electron-launcher.mjs";
 
 if (process.platform === "darwin") {
   buildAppSnapHelper({ arch: process.arch });
+} else if (process.platform === "win32") {
+  buildWindowsAppSnapHelper();
 }
 
 const childEnv = { ...process.env };

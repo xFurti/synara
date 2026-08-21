@@ -15,6 +15,8 @@ import { Schema } from "effect";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
+import type { DesktopAppSnapPlatform } from "@synara/contracts";
+
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { CentralIcon } from "../lib/central-icons";
 import { Button } from "./ui/button";
@@ -44,6 +46,7 @@ export function AppSnapWelcomeDialog() {
     AppSnapWelcomeStorageSchema,
   );
   const [open, setOpen] = useState(false);
+  const [platform, setPlatform] = useState<DesktopAppSnapPlatform>("macos");
   const sheetRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -58,7 +61,10 @@ export function AppSnapWelcomeDialog() {
     void bridge
       .getState()
       .then((state) => {
-        if (!disposed && state.supported) setOpen(true);
+        if (!disposed && state.supported) {
+          setPlatform(state.platform);
+          setOpen(true);
+        }
       })
       .catch((error) => {
         // Do not acknowledge a failed probe: a transient desktop startup issue
@@ -120,8 +126,9 @@ export function AppSnapWelcomeDialog() {
             {/* Two lines at 378px wide is the reference sheet's proportion; longer copy
                 wraps to three and throws the whole vertical rhythm off. */}
             <DialogDescription className="text-[14px] leading-[19.5px]">
-              Press both Option keys (⌥&thinsp;⌥) to snap any app&rsquo;s window into the task
-              you&rsquo;re working in.
+              {platform === "windows"
+                ? "Press both Alt keys to snap any app’s window into the task you’re working in."
+                : "Press both Option keys (⌥\u2009⌥) to snap any app’s window into the task you’re working in."}
             </DialogDescription>
           </DialogHeader>
 

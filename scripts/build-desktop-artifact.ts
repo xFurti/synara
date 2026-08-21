@@ -19,6 +19,7 @@ import {
   createDesktopPlatformBuildConfig,
   MAC_APPSNAP_HELPER_STAGE_PATH,
   MAC_DEVICE_HELPER_RESOURCE_PATH,
+  WINDOWS_APPSNAP_HELPER_STAGE_PATH,
   validateDesktopNativeBuildHost,
 } from "./lib/desktop-platform-build-config.ts";
 import { SYNARA_PRODUCTION_BUNDLE_ID } from "@synara/shared/desktopIdentity";
@@ -72,6 +73,11 @@ const AppSnapHelperBuildScript = Effect.zipWith(
   RepoRoot,
   Effect.service(Path.Path),
   (repoRoot, path) => path.join(repoRoot, "apps/desktop/scripts/build-appsnap-helper.mjs"),
+);
+const WindowsAppSnapHelperBuildScript = Effect.zipWith(
+  RepoRoot,
+  Effect.service(Path.Path),
+  (repoRoot, path) => path.join(repoRoot, "apps/desktop/scripts/build-appsnap-helper-windows.mjs"),
 );
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
 
@@ -821,6 +827,31 @@ const stageMacAppSnapHelper = Effect.fn("stageMacAppSnapHelper")(function* (
   }
 });
 
+const stageWindowsAppSnapHelper = Effect.fn("stageWindowsAppSnapHelper")(function* (
+  stageAppDir: string,
+  verbose: boolean,
+) {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const buildScript = yield* WindowsAppSnapHelperBuildScript;
+  const outputPath = path.join(stageAppDir, WINDOWS_APPSNAP_HELPER_STAGE_PATH);
+
+  yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
+  yield* Effect.log("[desktop-artifact] Building native Windows AppSnap helper...");
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: stageAppDir,
+      ...commandOutputOptions(verbose),
+    })`node ${buildScript} --release --output ${outputPath}`,
+  );
+
+  if (!(yield* fs.exists(outputPath))) {
+    return yield* new BuildScriptError({
+      message: `Windows AppSnap helper build completed but output was not found at ${outputPath}`,
+    });
+  }
+});
+
 const assertPackagedMacDeviceHelper = Effect.fn("assertPackagedMacDeviceHelper")(function* (
   stageDistDir: string,
   productName: string,
@@ -1037,6 +1068,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   if (options.platform === "mac") {
     yield* stageMacAppSnapHelper(stageAppDir, options.arch, options.verbose);
+  }
+  if (options.platform === "win") {
+    yield* stageWindowsAppSnapHelper(stageAppDir, options.verbose);
   }
 
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production

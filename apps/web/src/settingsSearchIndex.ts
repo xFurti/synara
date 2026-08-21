@@ -242,13 +242,13 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
     section: "appsnap",
     title: "Enable AppSnap",
     keywords:
-      "Capture the frontmost macOS app window with a configurable two-key shortcut and add it to a recent task. appshot screenshot snap window capture hotkey",
+      "Capture the frontmost app window with a configurable two-key shortcut and add it to a recent task. appshot screenshot snap window capture hotkey macos windows alt option",
   },
   {
     id: "appsnap:shortcut",
     section: "appsnap",
     title: "Shortcut",
-    keywords: "Press the left and right Option keys at the same time. hotkey chord alt keys",
+    keywords: "Press the left and right Option or Alt keys at the same time. hotkey chord alt keys",
   },
   {
     id: "appsnap:destination",
@@ -268,8 +268,8 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
     section: "appsnap",
     title: "Permission status",
     keywords:
-      "Input Monitoring and Screen Recording permissions for AppSnap in macOS System Settings. privacy security recheck grant",
-    // Renders only in the macOS desktop app, so no stable anchor on other platforms.
+      "Input Monitoring, Screen Recording, and Windows screenshot access for AppSnap. privacy security recheck grant macos windows",
+    // Permission rows differ by desktop OS, so this search hit opens the section rather than a row.
     target: null,
   },
 

@@ -235,4 +235,32 @@ describe("AppSnapSettingsPanel", () => {
 
     await mounted.unmount();
   });
+
+  it("shows Windows shortcut labels and screenshot access instead of macOS permissions", async () => {
+    const windowsState: DesktopAppSnapState = {
+      ...READY_STATE,
+      platform: "windows",
+    };
+    setDesktopBridge({
+      appSnap: {
+        getState: vi.fn().mockResolvedValue(windowsState),
+        requestPermissions: vi.fn().mockResolvedValue(windowsState),
+        setEnabled: vi.fn().mockResolvedValue(windowsState),
+        checkShortcut: vi.fn().mockResolvedValue({ available: true, reason: null }),
+        setShortcut: vi.fn().mockResolvedValue({
+          state: windowsState,
+          availability: { available: true, reason: null },
+        }),
+        onState: vi.fn(() => vi.fn()),
+      },
+    });
+
+    const mounted = await render(<AppSnapSettingsPanel active {...settingsBinding()} />);
+    await expect
+      .element(mounted.getByText("Listening — press Alt left + Alt right to snap"))
+      .toBeVisible();
+    await expect.element(mounted.getByText("Screenshot access")).toBeVisible();
+    await expect.element(mounted.getByText("Input Monitoring")).not.toBeInTheDocument();
+    await mounted.unmount();
+  });
 });

@@ -3,6 +3,7 @@
 
 import type {
   DesktopAppSnapKeyChord,
+  DesktopAppSnapPlatform,
   DesktopAppSnapShortcut,
   DesktopAppSnapShortcutModifier,
 } from "@synara/contracts";
@@ -44,11 +45,28 @@ const MODIFIER_BY_EVENT_CODE: Readonly<Record<string, DesktopAppSnapShortcutModi
   ShiftRight: "shift",
 };
 
-const MODIFIER_LABELS: Readonly<Record<DesktopAppSnapShortcutModifier, string>> = {
+const MAC_MODIFIER_LABELS: Readonly<Record<DesktopAppSnapShortcutModifier, string>> = {
   command: "⌘ Command",
   control: "⌃ Control",
   option: "⌥ Option",
   shift: "⇧ Shift",
+};
+
+const WINDOWS_MODIFIER_LABELS: Readonly<Record<DesktopAppSnapShortcutModifier, string>> = {
+  command: "Win",
+  control: "Ctrl",
+  option: "Alt",
+  shift: "Shift",
+};
+
+const WINDOWS_COMMAND_CHORD_ACTIONS: Readonly<Record<string, string>> = {
+  KeyD: "Show Desktop",
+  KeyE: "File Explorer",
+  KeyI: "Settings",
+  KeyL: "Lock",
+  KeyR: "Run",
+  KeyS: "Search",
+  KeyX: "the Quick Link menu",
 };
 
 const KEY_LABELS: Readonly<Record<string, string>> = {
@@ -132,11 +150,15 @@ export function appSnapModifierFromEventCode(code: string): DesktopAppSnapShortc
 }
 
 /**
- * Reason a chord must not be reserved globally even though macOS reports it as
+ * Reason a chord must not be reserved globally even though the OS reports it as
  * free, e.g. ⌘C or ⇧S: reserving it would break typing or a universal action
  * in every foreground app.
  */
-export function appSnapShortcutSystemConflict(chord: DesktopAppSnapKeyChord): string | null {
+export function appSnapShortcutSystemConflict(
+  chord: DesktopAppSnapKeyChord,
+  platform: DesktopAppSnapPlatform = "macos",
+): string | null {
+  if (platform === "windows") return windowsShortcutSystemConflict(chord);
   if (chord.modifier === "shift") {
     return "⇧ combinations are used for typing and text selection — combine with ⌘, ⌃ or ⌥ instead.";
   }
@@ -152,13 +174,47 @@ export function appSnapShortcutSystemConflict(chord: DesktopAppSnapKeyChord): st
   return `⌘ ${appSnapShortcutKeyLabel(chord.key)} is ${action} in almost every app.`;
 }
 
-export function appSnapShortcutLabels(shortcut: DesktopAppSnapShortcut): readonly [string, string] {
-  if (shortcut.kind === "both-option-keys") return ["⌥ left", "⌥ right"];
-  return [appSnapShortcutModifierLabel(shortcut.modifier), appSnapShortcutKeyLabel(shortcut.key)];
+function windowsShortcutSystemConflict(chord: DesktopAppSnapKeyChord): string | null {
+  if (chord.modifier === "shift") {
+    return "Shift combinations are used for typing and text selection — combine with Ctrl, Alt or Win instead.";
+  }
+  if (chord.modifier === "control") {
+    const action = SYSTEM_CONTROL_CHORD_ACTIONS[chord.key];
+    return action
+      ? `Ctrl ${appSnapShortcutKeyLabel(chord.key)} ${action} in every terminal.`
+      : null;
+  }
+  if (chord.modifier === "option") {
+    if (chord.key === "Tab") return "Windows uses Alt+Tab to switch apps.";
+    if (chord.key === "Escape") return "Windows uses Alt+Esc to cycle windows.";
+    if (chord.key === "Space") return "Windows uses Alt+Space for the window menu.";
+    return null;
+  }
+  if (chord.modifier !== "command") return null;
+  if (chord.key === "Tab") return "Windows uses Win+Tab for Task View.";
+  const action = WINDOWS_COMMAND_CHORD_ACTIONS[chord.key];
+  if (!action) return null;
+  return `Win+${appSnapShortcutKeyLabel(chord.key)} is ${action}.`;
 }
 
-export function appSnapShortcutModifierLabel(modifier: DesktopAppSnapShortcutModifier): string {
-  return MODIFIER_LABELS[modifier];
+export function appSnapShortcutLabels(
+  shortcut: DesktopAppSnapShortcut,
+  platform: DesktopAppSnapPlatform = "macos",
+): readonly [string, string] {
+  if (shortcut.kind === "both-option-keys") {
+    return platform === "windows" ? ["Alt left", "Alt right"] : ["⌥ left", "⌥ right"];
+  }
+  return [
+    appSnapShortcutModifierLabel(shortcut.modifier, platform),
+    appSnapShortcutKeyLabel(shortcut.key),
+  ];
+}
+
+export function appSnapShortcutModifierLabel(
+  modifier: DesktopAppSnapShortcutModifier,
+  platform: DesktopAppSnapPlatform = "macos",
+): string {
+  return platform === "windows" ? WINDOWS_MODIFIER_LABELS[modifier] : MAC_MODIFIER_LABELS[modifier];
 }
 
 export function appSnapShortcutKeyLabel(code: string): string {

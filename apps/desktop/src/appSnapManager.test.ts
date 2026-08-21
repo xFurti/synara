@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DesktopAppSnapManager,
   desktopAppSnapPlatform,
+  isAppSnapSupportedPlatform,
   isPathInsideDirectory,
   parseAppSnapHelperMessage,
 } from "./appSnapManager";
@@ -39,9 +40,9 @@ async function flushPromises(): Promise<void> {
 }
 
 describe("desktop AppSnap platform state", () => {
-  it("exposes an explicit unsupported state outside macOS", async () => {
+  it("treats Windows as supported and Linux as unsupported", async () => {
     const onState = vi.fn();
-    const manager = new DesktopAppSnapManager({
+    const windowsManager = new DesktopAppSnapManager({
       platform: "win32",
       helperPath: "C:\\missing\\synara-appsnap-helper.exe",
       captureDirectory: "C:\\tmp\\appsnap",
@@ -50,17 +51,57 @@ describe("desktop AppSnap platform state", () => {
       onCaptured: vi.fn(),
       onError: vi.fn(),
     });
+    const linuxManager = new DesktopAppSnapManager({
+      platform: "linux",
+      helperPath: "/tmp/missing-appsnap-helper",
+      captureDirectory: "/tmp/appsnap",
+      excludedBundleId: SYNARA_DEVELOPMENT_BUNDLE_ID,
+      onState,
+      onCaptured: vi.fn(),
+      onError: vi.fn(),
+    });
 
     expect(desktopAppSnapPlatform("darwin")).toBe("macos");
+    expect(desktopAppSnapPlatform("win32")).toBe("windows");
     expect(desktopAppSnapPlatform("linux")).toBe("linux");
-    expect(await manager.setEnabled(true)).toMatchObject({
+    expect(isAppSnapSupportedPlatform("macos")).toBe(true);
+    expect(isAppSnapSupportedPlatform("windows")).toBe(true);
+    expect(isAppSnapSupportedPlatform("linux")).toBe(false);
+    expect(windowsManager.getState()).toMatchObject({
       platform: "windows",
+      supported: true,
+      enabled: false,
+      status: "disabled",
+      shortcut: { kind: "both-option-keys" },
+    });
+    expect(await linuxManager.setEnabled(true)).toMatchObject({
+      platform: "linux",
       supported: false,
       enabled: false,
       status: "unsupported",
       shortcut: null,
     });
     expect(onState).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a missing Windows helper as an error instead of remaining unsupported", async () => {
+    const manager = new DesktopAppSnapManager({
+      platform: "win32",
+      helperPath: "C:\\missing\\synara-appsnap-helper.exe",
+      captureDirectory: "C:\\tmp\\synara-appsnap-test",
+      excludedBundleId: SYNARA_DEVELOPMENT_BUNDLE_ID,
+      onState: vi.fn(),
+      onCaptured: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    expect(await manager.setEnabled(true)).toMatchObject({
+      platform: "windows",
+      supported: true,
+      status: "error",
+      shortcut: { kind: "both-option-keys" },
+      message: "The AppSnap native helper is missing from this desktop build.",
+    });
   });
 
   it("preserves a missing-helper error instead of reporting a permission problem", async () => {
@@ -83,6 +124,27 @@ describe("desktop AppSnap platform state", () => {
 });
 
 describe("AppSnap shortcut availability", () => {
+  it("allows the default both-Alt shortcut on Windows without probing the registry", () => {
+    const manager = new DesktopAppSnapManager({
+      platform: "win32",
+      helperPath: "C:\\missing\\synara-appsnap-helper.exe",
+      captureDirectory: "C:\\tmp\\synara-appsnap-test",
+      excludedBundleId: SYNARA_DEVELOPMENT_BUNDLE_ID,
+      onState: vi.fn(),
+      onCaptured: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    expect(manager.checkShortcut({ kind: "both-option-keys" })).toEqual({
+      available: true,
+      reason: null,
+    });
+    expect(manager.checkShortcut({ kind: "key-chord", modifier: "option", key: "Tab" })).toEqual({
+      available: false,
+      reason: "Windows uses Alt+Tab to switch apps.",
+    });
+  });
+
   it("probes macOS registration and stores an available two-key shortcut", async () => {
     const register = vi.fn(() => true);
     const unregister = vi.fn();
@@ -909,5 +971,12 @@ describe("AppSnap capture path guard", () => {
     expect(isPathInsideDirectory("/tmp/appsnap", "/tmp/appsnap/capture.png")).toBe(true);
     expect(isPathInsideDirectory("/tmp/appsnap", "/tmp/appsnap")).toBe(false);
     expect(isPathInsideDirectory("/tmp/appsnap", "/tmp/other/capture.png")).toBe(false);
+  });
+
+  it("rejects Windows paths on another drive even when they do not start with ..", () => {
+    if (process.platform !== "win32") return;
+    expect(isPathInsideDirectory("C:\\tmp\\appsnap", "C:\\tmp\\appsnap\\capture.png")).toBe(true);
+    expect(isPathInsideDirectory("C:\\tmp\\appsnap", "D:\\tmp\\appsnap\\capture.png")).toBe(false);
+    expect(isPathInsideDirectory("C:\\tmp\\appsnap", "C:\\tmp\\appsnap")).toBe(false);
   });
 });

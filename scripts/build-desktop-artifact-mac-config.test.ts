@@ -12,6 +12,8 @@ import {
   MICROPHONE_USAGE_DESCRIPTION,
   NODE_PTY_ASAR_UNPACK_GLOBS,
   validateDesktopNativeBuildHost,
+  WINDOWS_APPSNAP_HELPER_ASAR_EXCLUSION,
+  WINDOWS_APPSNAP_HELPER_STAGE_PATH,
   WINDOWS_INSTALLER_GUID,
 } from "./lib/desktop-platform-build-config.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
@@ -69,15 +71,10 @@ describe("createDesktopPlatformBuildConfig", () => {
     assert.deepStrictEqual(config.dmg, { sign: false, writeUpdateInfo: false });
   });
 
-  it("leaves non-macOS platform configs unchanged", () => {
+  it("leaves Linux platform configs without AppSnap helper extras", () => {
     const linux = createDesktopPlatformBuildConfig({
       platform: "linux",
       target: "AppImage",
-    });
-    const win = createDesktopPlatformBuildConfig({
-      platform: "win",
-      target: "nsis",
-      windowsAzureSignOptions: { publisherName: "Synara" },
     });
 
     assert.equal(linux.mac, undefined);
@@ -94,9 +91,31 @@ describe("createDesktopPlatformBuildConfig", () => {
         },
       },
     });
+  });
+
+  it("packages the native Windows AppSnap helper", () => {
+    const win = createDesktopPlatformBuildConfig({
+      platform: "win",
+      target: "nsis",
+      windowsAzureSignOptions: { publisherName: "Synara" },
+    });
 
     assert.equal(win.mac, undefined);
-    assert.equal(win.extraFiles, undefined);
+    assert.equal(
+      WINDOWS_APPSNAP_HELPER_STAGE_PATH,
+      "apps/desktop/native/appsnap-win/build/synara-appsnap-helper.exe",
+    );
+    assert.equal(
+      WINDOWS_APPSNAP_HELPER_ASAR_EXCLUSION,
+      "!apps/desktop/native/appsnap-win/build/**",
+    );
+    assert.deepStrictEqual(win.files, ["**/*", WINDOWS_APPSNAP_HELPER_ASAR_EXCLUSION]);
+    assert.deepStrictEqual(win.extraFiles, [
+      {
+        from: WINDOWS_APPSNAP_HELPER_STAGE_PATH,
+        to: "Helpers/synara-appsnap-helper.exe",
+      },
+    ]);
     assert.deepStrictEqual(win.asarUnpack, ["node_modules/node-pty/**"]);
     assert.equal(WINDOWS_INSTALLER_GUID, "368107a8-afe6-5db5-ab3b-d4f331684868");
     assert.deepStrictEqual(win.nsis, {
@@ -181,6 +200,26 @@ describe("createDesktopPlatformBuildConfig", () => {
       hostArch: "arm64",
     });
     assert.ok(issue?.includes("Build mac/arm64 on macOS"));
+  });
+
+  it("requires a Windows host for the native AppSnap helper", () => {
+    assert.equal(
+      validateDesktopNativeBuildHost({
+        platform: "win",
+        arch: "x64",
+        hostPlatform: "win32",
+        hostArch: "x64",
+      }),
+      null,
+    );
+
+    const issue = validateDesktopNativeBuildHost({
+      platform: "win",
+      arch: "x64",
+      hostPlatform: "darwin",
+      hostArch: "arm64",
+    });
+    assert.ok(issue?.includes("Build win/x64 on Windows"));
   });
 
   it("keeps separate macOS sources for solid and rounded icons", () => {
